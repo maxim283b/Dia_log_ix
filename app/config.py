@@ -20,6 +20,7 @@ DEFAULT_TRANSCRIPTION_API_KEY = ""
 DEFAULT_TRANSCRIPTION_MODEL = "whisper-1"
 DEFAULT_TRANSCRIPTION_BASE_URL = ""
 DEFAULT_TELEGRAM_PROXY_URL = ""
+DEFAULT_TELEGRAM_SSL_VERIFY = True
 DEFAULT_BOT_MODE = "polling"
 DEFAULT_WEBHOOK_URL = ""
 DEFAULT_BOT_USERNAME = ""
@@ -39,6 +40,7 @@ class Settings:
     transcription_model: str = DEFAULT_TRANSCRIPTION_MODEL
     transcription_base_url: str = DEFAULT_TRANSCRIPTION_BASE_URL
     telegram_proxy_url: str = DEFAULT_TELEGRAM_PROXY_URL
+    telegram_ssl_verify: bool = DEFAULT_TELEGRAM_SSL_VERIFY
     bot_mode: str = DEFAULT_BOT_MODE
     webhook_url: str = DEFAULT_WEBHOOK_URL
     bot_username: str = DEFAULT_BOT_USERNAME
@@ -66,6 +68,17 @@ class Settings:
             except ValueError:
                 return default
 
+        def env_bool_or_default(key: str, default: bool) -> bool:
+            value = os.getenv(key)
+            if value is None:
+                return default
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off"}:
+                return False
+            return default
+
         return cls(
             telegram_bot_token=env_or_default("TELEGRAM_BOT_TOKEN", DEFAULT_TELEGRAM_BOT_TOKEN),
             database_url=env_or_default("DATABASE_URL", DEFAULT_DATABASE_URL),
@@ -77,6 +90,7 @@ class Settings:
             transcription_model=env_or_default("TRANSCRIPTION_MODEL", DEFAULT_TRANSCRIPTION_MODEL),
             transcription_base_url=env_or_default("TRANSCRIPTION_BASE_URL", DEFAULT_TRANSCRIPTION_BASE_URL),
             telegram_proxy_url=env_or_default("TELEGRAM_PROXY_URL", DEFAULT_TELEGRAM_PROXY_URL),
+            telegram_ssl_verify=env_bool_or_default("TELEGRAM_SSL_VERIFY", DEFAULT_TELEGRAM_SSL_VERIFY),
             bot_mode=env_or_default("BOT_MODE", DEFAULT_BOT_MODE),
             webhook_url=env_or_default("WEBHOOK_URL", DEFAULT_WEBHOOK_URL),
             bot_username=env_or_default("BOT_USERNAME", DEFAULT_BOT_USERNAME),

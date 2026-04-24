@@ -66,6 +66,8 @@ def build_bot(settings: Settings) -> Bot:
     if not settings.telegram_bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
     session = AiohttpSession(proxy=settings.telegram_proxy_url or None)
+    if not settings.telegram_ssl_verify:
+        session._connector_init["ssl"] = False
     return Bot(token=settings.telegram_bot_token, session=session)
 
 

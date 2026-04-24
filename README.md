@@ -89,6 +89,16 @@ TELEGRAM_PROXY_URL=http://user:pass@proxy-host:proxy-port
 
 You can also use SOCKS5 if your proxy provider gives that format.
 
+If the proxy injects its own TLS certificate and Telegram requests fail with
+certificate verification errors, you can temporarily disable verification:
+
+```env
+TELEGRAM_SSL_VERIFY=false
+```
+
+This is a workaround for restricted environments. Prefer a clean proxy with a
+trusted certificate chain for production.
+
 ## Local run
 
 ```bash
@@ -285,5 +295,5 @@ Covered by tests:
 - The project ships with mock LLM and mock transcription providers so it can run without external APIs.
 - For real audio transcription on the VPS, use `TRANSCRIPTION_MODE=faster_whisper` with `ffmpeg` installed in the container.
 - For cloud LLMs, prefer an OpenAI-compatible endpoint such as Mistral.
-- If Telegram is blocked from the VPS, configure `TELEGRAM_PROXY_URL` and route Bot API traffic through it.
+- If Telegram is blocked from the VPS, configure `TELEGRAM_PROXY_URL` and, if needed, `TELEGRAM_SSL_VERIFY=false` for proxy environments with certificate interception.
 - The schema is intentionally MVP-friendly but already split into models, repositories, adapters, and runners.
