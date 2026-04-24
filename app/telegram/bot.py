@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command
 from aiogram.types import Message
+from sqlalchemy.exc import IntegrityError
 
 from app.agent.evaluator import DigestEvaluator
 from app.agent.runner import AgentRunner, BaselineRunner
@@ -137,31 +138,44 @@ async def _ingest_message(message: Message, session_factory) -> None:
         users = UserRepository(session)
         chats = ChatRepository(session)
         messages = MessageRepository(session)
-        user = await users.get_or_create_from_payload(message.from_user)
-        chat = await chats.get_or_create_from_payload(message.chat)
-        await session.flush()
-        existing = await messages.get_or_create_by_telegram_message_id(chat.id, message.message_id)
-        if existing is not None:
+        try:
+            user = await users.get_or_create_from_payload(message.from_user)
+            chat = await chats.get_or_create_from_payload(message.chat)
+            await session.flush()
+            existing = await messages.get_or_create_by_telegram_message_id(chat.id, message.message_id)
+            if existing is not None:
+                return
+            message_row = await messages.create(
+                chat=chat,
+                user=user,
+                telegram_message_id=message.message_id,
+                date=message.date,
+                message_type="voice"
+                if message.voice
+                else "audio"
+                if message.audio
+                else "video_note"
+                if message.video_note
+                else "text",
+                text=text,
+                file_id=getattr(
+                    getattr(message, "voice", None)
+                    or getattr(message, "audio", None)
+                    or getattr(message, "video_note", None),
+                    "file_id",
+                    None,
+                ),
+                transcribed_text=None,
+                is_command=False,
+                raw_json=message.model_dump(mode="json"),
+            )
+            await session.flush()
+            await session.commit()
             return
-        await messages.create(
-            chat_id=chat.id,
-            user_id=user.id,
-            telegram_message_id=message.message_id,
-            date=message.date,
-            message_type="voice"
-            if message.voice
-            else "audio"
-            if message.audio
-            else "video_note"
-            if message.video_note
-            else "text",
-            text=text,
-            file_id=getattr(getattr(message, "voice", None) or getattr(message, "audio", None) or getattr(message, "video_note", None), "file_id", None),
-            transcribed_text=None,
-            is_command=False,
-            raw_json=message.model_dump(mode="json"),
-        )
-        await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            logger.exception("Failed to ingest message %s in chat %s", message.message_id, message.chat.id)
+            return
 
 
 async def _handle_digest(message: Message, bot: Bot, session_factory, settings: Settings) -> None:
