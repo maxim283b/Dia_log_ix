@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command
@@ -22,6 +23,8 @@ from app.transcription.providers import (
 )
 from app.transcription.service import TelegramMediaTranscriber
 from app.utils.telegram import get_message_text, is_command_message, is_digest_trigger
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -70,9 +73,13 @@ def build_dispatcher() -> Dispatcher:
 
 async def setup_bot(session_factory, settings: Settings) -> tuple[Bot, Dispatcher]:
     bot = build_bot(settings)
-    me = await bot.get_me()
     if not settings.bot_username:
-        settings.bot_username = me.username or ""
+        try:
+            me = await bot.get_me()
+        except Exception:
+            logger.warning("Failed to resolve bot username from Telegram API; using empty username")
+        else:
+            settings.bot_username = me.username or ""
     dispatcher = build_dispatcher()
     register_routes(dispatcher, bot, session_factory, settings)
     return bot, dispatcher
