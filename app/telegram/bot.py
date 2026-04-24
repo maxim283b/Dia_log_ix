@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import logging
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command
 from aiogram.types import Message
 
@@ -64,7 +65,8 @@ def build_transcription_provider(settings: Settings):
 def build_bot(settings: Settings) -> Bot:
     if not settings.telegram_bot_token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
-    return Bot(token=settings.telegram_bot_token)
+    session = AiohttpSession(proxy=settings.telegram_proxy_url or None)
+    return Bot(token=settings.telegram_bot_token, session=session)
 
 
 def build_dispatcher() -> Dispatcher:

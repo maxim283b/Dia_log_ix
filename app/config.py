@@ -19,6 +19,7 @@ DEFAULT_TRANSCRIPTION_MODE = "mock"
 DEFAULT_TRANSCRIPTION_API_KEY = ""
 DEFAULT_TRANSCRIPTION_MODEL = "whisper-1"
 DEFAULT_TRANSCRIPTION_BASE_URL = ""
+DEFAULT_TELEGRAM_PROXY_URL = ""
 DEFAULT_BOT_MODE = "polling"
 DEFAULT_WEBHOOK_URL = ""
 DEFAULT_BOT_USERNAME = ""
@@ -37,6 +38,7 @@ class Settings:
     transcription_api_key: str = DEFAULT_TRANSCRIPTION_API_KEY
     transcription_model: str = DEFAULT_TRANSCRIPTION_MODEL
     transcription_base_url: str = DEFAULT_TRANSCRIPTION_BASE_URL
+    telegram_proxy_url: str = DEFAULT_TELEGRAM_PROXY_URL
     bot_mode: str = DEFAULT_BOT_MODE
     webhook_url: str = DEFAULT_WEBHOOK_URL
     bot_username: str = DEFAULT_BOT_USERNAME
@@ -74,6 +76,7 @@ class Settings:
             transcription_api_key=env_or_default("TRANSCRIPTION_API_KEY", DEFAULT_TRANSCRIPTION_API_KEY),
             transcription_model=env_or_default("TRANSCRIPTION_MODEL", DEFAULT_TRANSCRIPTION_MODEL),
             transcription_base_url=env_or_default("TRANSCRIPTION_BASE_URL", DEFAULT_TRANSCRIPTION_BASE_URL),
+            telegram_proxy_url=env_or_default("TELEGRAM_PROXY_URL", DEFAULT_TELEGRAM_PROXY_URL),
             bot_mode=env_or_default("BOT_MODE", DEFAULT_BOT_MODE),
             webhook_url=env_or_default("WEBHOOK_URL", DEFAULT_WEBHOOK_URL),
             bot_username=env_or_default("BOT_USERNAME", DEFAULT_BOT_USERNAME),

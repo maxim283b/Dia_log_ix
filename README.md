@@ -57,6 +57,7 @@ Required:
 Optional:
 
 - `TRANSCRIPTION_BASE_URL`
+- `TELEGRAM_PROXY_URL`
 - `BOT_USERNAME`
 
 ### Cloud LLM setup
@@ -77,6 +78,16 @@ LLM_MODEL=mistral-large-latest
 ```
 
 Do not commit real API keys. Rotate any key that was shared in chat.
+
+### Telegram proxy
+
+If the VPS cannot reach `api.telegram.org` directly, set a proxy for aiogram:
+
+```env
+TELEGRAM_PROXY_URL=http://user:pass@proxy-host:proxy-port
+```
+
+You can also use SOCKS5 if your proxy provider gives that format.
 
 ## Local run
 
@@ -274,4 +285,5 @@ Covered by tests:
 - The project ships with mock LLM and mock transcription providers so it can run without external APIs.
 - For real audio transcription on the VPS, use `TRANSCRIPTION_MODE=faster_whisper` with `ffmpeg` installed in the container.
 - For cloud LLMs, prefer an OpenAI-compatible endpoint such as Mistral.
+- If Telegram is blocked from the VPS, configure `TELEGRAM_PROXY_URL` and route Bot API traffic through it.
 - The schema is intentionally MVP-friendly but already split into models, repositories, adapters, and runners.
