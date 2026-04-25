@@ -12,6 +12,7 @@ class HealthResponse(BaseModel):
 class AgentRunResponse(BaseModel):
     id: int
     chat_id: int
+    chat_telegram_id: int | None = None
     user_id: int
     objective: str
     mode: str
@@ -34,4 +35,3 @@ class AgentTraceResponse(BaseModel):
     error: str | None = None
     reason_next_step: str | None = None
     created_at: datetime
-

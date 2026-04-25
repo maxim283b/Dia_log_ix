@@ -16,7 +16,7 @@ class AgentRunRepository(BaseRepository):
     async def get_recent(self, chat_id: int | None = None, limit: int = 20) -> list[AgentRun]:
         stmt = select(AgentRun).order_by(AgentRun.id.desc()).limit(limit)
         if chat_id is not None:
-            stmt = stmt.where(AgentRun.chat_id == chat_id)
+            stmt = stmt.where(AgentRun.chat_telegram_id == chat_id)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -27,7 +27,7 @@ class AgentRunRepository(BaseRepository):
     async def get_latest_completed(self, chat_id: int) -> AgentRun | None:
         result = await self.session.execute(
             select(AgentRun)
-            .where(AgentRun.chat_id == chat_id, AgentRun.status == "completed")
+            .where(AgentRun.chat_telegram_id == chat_id, AgentRun.status == "completed")
             .order_by(AgentRun.id.desc())
             .limit(1)
         )

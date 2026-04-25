@@ -78,6 +78,7 @@ class BaselineRunner:
         self,
         *,
         chat_id: int,
+        chat_telegram_id: int | None = None,
         user_id: int,
         objective: str,
         start_message_id: int,
@@ -85,6 +86,7 @@ class BaselineRunner:
     ) -> AgentRun:
         run = await self.run_repository.create(
             chat_id=chat_id,
+            chat_telegram_id=chat_telegram_id,
             user_id=user_id,
             objective=objective,
             mode="baseline",
@@ -190,6 +192,7 @@ class AgentRunner:
         self,
         *,
         chat_id: int,
+        chat_telegram_id: int | None = None,
         user_id: int,
         objective: str,
         start_message_id: int,
@@ -197,6 +200,7 @@ class AgentRunner:
     ) -> AgentRun:
         run = await self.run_repository.create(
             chat_id=chat_id,
+            chat_telegram_id=chat_telegram_id,
             user_id=user_id,
             objective=objective,
             mode="agent",

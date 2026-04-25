@@ -47,6 +47,7 @@ async def test_baseline_runner(session):
 
     run = await runner.run(
         chat_id=chat.id,
+        chat_telegram_id=chat.telegram_chat_id,
         user_id=user.id,
         objective="digest",
         start_message_id=1,
@@ -86,6 +87,7 @@ async def test_agent_runner_with_mock_tools(session):
 
     run = await runner.run(
         chat_id=chat.id,
+        chat_telegram_id=chat.telegram_chat_id,
         user_id=user.id,
         objective="digest",
         start_message_id=1,
@@ -134,6 +136,7 @@ async def test_baseline_runner_skips_evaluation_timeout(session):
 
     run = await runner.run(
         chat_id=chat.id,
+        chat_telegram_id=chat.telegram_chat_id,
         user_id=user.id,
         objective="digest",
         start_message_id=1,

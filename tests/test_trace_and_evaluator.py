@@ -12,6 +12,7 @@ from app.models.agent_run import AgentRun
 async def test_trace_save(session):
     run = AgentRun(
         chat_id=1,
+        chat_telegram_id=1001,
         user_id=2,
         objective="test",
         mode="agent",
@@ -48,4 +49,3 @@ def test_evaluator_json_parsing():
     assert parsed.coverage_of_required_fields == 2
     assert parsed.source_consistency == 1
     assert parsed.comment == "ok"
-

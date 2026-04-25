@@ -224,6 +224,7 @@ async def _handle_digest(message: Message, bot: Bot, session_factory, settings: 
             )
         run = await runner.run(
             chat_id=chat.id,
+            chat_telegram_id=chat.telegram_chat_id,
             user_id=user.id,
             objective="Generate a digest of the conversation",
             start_message_id=start_message_id,
