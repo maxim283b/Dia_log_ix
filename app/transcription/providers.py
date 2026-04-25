@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import json
+import time
 from urllib import request
 
 from app.transcription.base import TranscriptionResult
+
+
+logger = logging.getLogger(__name__)
 
 
 class MockTranscriptionProvider:
@@ -60,10 +65,18 @@ class FasterWhisperTranscriptionProvider:
             raise RuntimeError("faster-whisper is not installed") from exc
 
         if self._model is None:
+            logger.info("Loading faster-whisper model: %s", self.model)
             self._model = WhisperModel(self.model)
         with tempfile.TemporaryDirectory(prefix="digestbot-whisper-") as tmpdir:
             path = Path(tmpdir) / filename
             path.write_bytes(audio_bytes)
+            started = time.perf_counter()
             segments, info = self._model.transcribe(str(path))
             text = " ".join(segment.text for segment in segments).strip()
+            logger.info(
+                "faster-whisper transcription finished: filename=%s text_len=%s latency_ms=%s",
+                filename,
+                len(text or ""),
+                int((time.perf_counter() - started) * 1000),
+            )
             return TranscriptionResult(text=text, raw={"language": getattr(info, "language", None)})

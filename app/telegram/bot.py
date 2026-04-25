@@ -79,6 +79,12 @@ def build_dispatcher() -> Dispatcher:
 
 async def setup_bot(session_factory, settings: Settings) -> tuple[Bot, Dispatcher]:
     bot = build_bot(settings)
+    logger.info(
+        "Telegram bot initialized: proxy=%s ssl_verify=%s bot_username=%s",
+        "enabled" if settings.telegram_proxy_url else "disabled",
+        settings.telegram_ssl_verify,
+        settings.bot_username or "<auto>",
+    )
     if not settings.bot_username:
         try:
             me = await bot.get_me()
@@ -130,8 +136,16 @@ def register_routes(dispatcher: Dispatcher, bot: Bot, session_factory, settings:
 
     @router.message(F.chat.type.in_({"group", "supergroup"}), F.text.func(lambda text: not is_command_message(text)))
     async def store_group_message(message: Message) -> None:
+        logger.debug(
+            "Incoming group message: chat_id=%s message_id=%s user_id=%s text_len=%s",
+            message.chat.id,
+            message.message_id,
+            getattr(message.from_user, "id", None),
+            len(message.text or ""),
+        )
         await _ingest_message(message, session_factory)
         if is_digest_trigger(message.text, settings.bot_username):
+            logger.info("Digest trigger detected: chat_id=%s message_id=%s", message.chat.id, message.message_id)
             await _handle_digest(message, bot, session_factory, settings)
 
     dispatcher.include_router(router)
@@ -143,6 +157,15 @@ async def _ingest_message(message: Message, session_factory) -> None:
     text = get_message_text(message)
     if is_command_message(text):
         return
+    message_type = "voice" if message.voice else "audio" if message.audio else "video_note" if message.video_note else "text"
+    logger.info(
+        "Ingest message start: chat_id=%s message_id=%s user_id=%s type=%s text_len=%s",
+        message.chat.id,
+        message.message_id,
+        getattr(message.from_user, "id", None),
+        message_type,
+        len(text or ""),
+    )
     async with session_factory() as session:
         users = UserRepository(session)
         chats = ChatRepository(session)
@@ -153,19 +176,14 @@ async def _ingest_message(message: Message, session_factory) -> None:
             await session.flush()
             existing = await messages.get_or_create_by_telegram_message_id(chat.id, message.message_id)
             if existing is not None:
+                logger.debug("Skipping duplicate message: chat_db_id=%s message_id=%s", chat.id, message.message_id)
                 return
             message_row = await messages.create(
                 chat=chat,
                 user=user,
                 telegram_message_id=message.message_id,
                 date=message.date,
-                message_type="voice"
-                if message.voice
-                else "audio"
-                if message.audio
-                else "video_note"
-                if message.video_note
-                else "text",
+                message_type=message_type,
                 text=text,
                 file_id=getattr(
                     getattr(message, "voice", None)
@@ -180,6 +198,13 @@ async def _ingest_message(message: Message, session_factory) -> None:
             )
             await session.flush()
             await session.commit()
+            logger.info(
+                "Ingest message stored: chat_db_id=%s message_id=%s user_db_id=%s row_id=%s",
+                chat.id,
+                message.message_id,
+                user.id,
+                getattr(message_row, "id", None),
+            )
             return
         except IntegrityError:
             await session.rollback()
@@ -190,6 +215,13 @@ async def _ingest_message(message: Message, session_factory) -> None:
 async def _handle_digest(message: Message, bot: Bot, session_factory, settings: Settings) -> None:
     if message.from_user is None:
         return
+    logger.info(
+        "Digest requested: chat_id=%s message_id=%s user_id=%s text=%r",
+        message.chat.id,
+        message.message_id,
+        message.from_user.id,
+        (message.text or "")[:160],
+    )
     async with session_factory() as session:
         llm = build_llm_provider(settings)
         transcription = build_transcription_provider(settings)
@@ -212,6 +244,15 @@ async def _handle_digest(message: Message, bot: Bot, session_factory, settings: 
         start_message_id = start.telegram_message_id if start else 0
         lowered_text = (message.text or "").lower()
         mode = "baseline" if "baseline" in lowered_text else "agent"
+        logger.info(
+            "Digest window resolved: chat_db_id=%s chat_telegram_id=%s user_db_id=%s mode=%s start_message_id=%s end_message_id=%s",
+            chat.id,
+            chat.telegram_chat_id,
+            user.id,
+            mode,
+            start_message_id,
+            message.message_id,
+        )
         if mode == "agent":
             runner = AgentRunner(session=session, tools=tools, run_repository=run_repo, evaluator=evaluator)
         else:
@@ -231,6 +272,13 @@ async def _handle_digest(message: Message, bot: Bot, session_factory, settings: 
             end_message_id=message.message_id,
         )
         await session.commit()
+        logger.info(
+            "Digest completed: run_id=%s status=%s stop_reason=%s digest_len=%s",
+            run.id,
+            run.status,
+            run.stop_reason,
+            len(run.final_digest or ""),
+        )
         await message.answer(run.final_digest or "Дайджест не удалось сформировать.")
 
 
@@ -241,6 +289,12 @@ async def _handle_clarification(message: Message, session_factory, settings: Set
     if not question:
         await message.answer("Напиши вопрос после команды, например: /ask кто что предложил?")
         return
+    logger.info(
+        "Clarification requested: chat_id=%s message_id=%s question=%r",
+        message.chat.id,
+        message.message_id,
+        question[:160],
+    )
     async with session_factory() as session:
         run_repo = AgentRunRepository(session)
         run = await run_repo.get_latest_completed(message.chat.id)
@@ -270,41 +324,62 @@ async def _handle_clarification(message: Message, session_factory, settings: Set
                 "Не удалось получить уточнение от модели. "
                 f"Последний дайджест:\n{run.final_digest}"
             )
+        logger.info(
+            "Clarification answered: chat_id=%s run_id=%s answer_len=%s",
+            message.chat.id,
+            run.id,
+            len(answer),
+        )
         await message.answer(answer)
 
 
 async def _handle_tasks(message: Message, session_factory) -> None:
     if message.chat is None:
         return
+    logger.info("Tasks requested: chat_id=%s message_id=%s", message.chat.id, message.message_id)
     async with session_factory() as session:
         run_repo = AgentRunRepository(session)
         run = await run_repo.get_latest_completed(message.chat.id)
         if run is None or not run.tasks:
             await message.answer("Задачи пока не найдены.")
             return
+        logger.info("Tasks returned: chat_id=%s run_id=%s tasks_count=%s", message.chat.id, run.id, len(run.tasks or []))
         lines = []
         for idx, task in enumerate(run.tasks, start=1):
             owner = task.get("who") or task.get("owner") or "unknown"
             what = task.get("what") or task.get("task") or str(task)
             deadline = task.get("deadline") or task.get("when") or "no deadline"
+            if not str(what).strip():
+                continue
+            if not str(owner).strip() and str(what).strip() in {"unknown", str(task).strip()}:
+                continue
             lines.append(f"{idx}. {owner}: {what} ({deadline})")
-        await message.answer("\n".join(lines))
+        await message.answer("\n".join(lines) if lines else "Задачи пока не найдены.")
 
 
 async def _handle_decisions(message: Message, session_factory) -> None:
     if message.chat is None:
         return
+    logger.info("Decisions requested: chat_id=%s message_id=%s", message.chat.id, message.message_id)
     async with session_factory() as session:
         run_repo = AgentRunRepository(session)
         run = await run_repo.get_latest_completed(message.chat.id)
         if run is None or not run.decisions:
             await message.answer("Решения пока не найдены.")
             return
+        logger.info(
+            "Decisions returned: chat_id=%s run_id=%s decisions_count=%s",
+            message.chat.id,
+            run.id,
+            len(run.decisions or []),
+        )
         lines = []
         for idx, decision in enumerate(run.decisions, start=1):
             title = decision.get("title") or decision.get("decision") or str(decision)
+            if not str(title).strip():
+                continue
             lines.append(f"{idx}. {title}")
-        await message.answer("\n".join(lines))
+        await message.answer("\n".join(lines) if lines else "Решения пока не найдены.")
 
 
 def _extract_command_arguments(text: str) -> str:

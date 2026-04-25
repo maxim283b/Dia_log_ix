@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,9 @@ from app.repositories.agent_runs import AgentRunRepository
 from app.repositories.digests import DigestEvaluationRepository
 from app.repositories.messages import MessageRepository
 from app.utils.time import utc_now
+
+
+logger = logging.getLogger(__name__)
 
 
 class TraceRecorder:
@@ -84,6 +88,14 @@ class BaselineRunner:
         start_message_id: int,
         end_message_id: int,
     ) -> AgentRun:
+        logger.info(
+            "Baseline run started: chat_id=%s chat_telegram_id=%s user_id=%s start_message_id=%s end_message_id=%s",
+            chat_id,
+            chat_telegram_id,
+            user_id,
+            start_message_id,
+            end_message_id,
+        )
         run = await self.run_repository.create(
             chat_id=chat_id,
             chat_telegram_id=chat_telegram_id,
@@ -97,6 +109,7 @@ class BaselineRunner:
         )
         await self.session.flush()
         messages = await self.message_repository.get_messages_from(chat_id, max(0, start_message_id), end_message_id)
+        logger.info("Baseline run collected messages: count=%s", len(messages))
         await self.tools.transcribe_media_messages(messages)
         if not messages:
             digest = (
@@ -123,6 +136,7 @@ class BaselineRunner:
                 raw_json=evaluation.raw_json,
             )
             return run
+        logger.info("Baseline run generating digest")
         digest = await self.tools.generate_digest(
             state=AgentState(objective=objective, chat_id=chat_id, user_id=user_id),
             messages=messages,
@@ -142,6 +156,7 @@ class BaselineRunner:
         run.stop_reason = "completed"
         run.finished_at = utc_now()
         await self.session.flush()
+        logger.info("Baseline run completed: run_id=%s digest_len=%s", run.id, len(digest or ""))
         evaluation_repo = DigestEvaluationRepository(self.session)
         await evaluation_repo.upsert(
             run_id=run.id,
@@ -198,6 +213,14 @@ class AgentRunner:
         start_message_id: int,
         end_message_id: int,
     ) -> AgentRun:
+        logger.info(
+            "Agent run started: chat_id=%s chat_telegram_id=%s user_id=%s start_message_id=%s end_message_id=%s",
+            chat_id,
+            chat_telegram_id,
+            user_id,
+            start_message_id,
+            end_message_id,
+        )
         run = await self.run_repository.create(
             chat_id=chat_id,
             chat_telegram_id=chat_telegram_id,
@@ -222,6 +245,11 @@ class AgentRunner:
             )
             latency = int((time.perf_counter() - t0) * 1000)
             state.start_message_id = last_message.telegram_message_id if last_message else start_message_id
+            logger.info(
+                "Step get_last_user_message completed: run_pending=%s last_message_id=%s",
+                run.id,
+                getattr(last_message, "telegram_message_id", None),
+            )
             await tracer.save(
                 action="get_last_user_message",
                 input_json={"chat_id": chat_id, "user_id": user_id, "before_message_id": end_message_id},
@@ -240,6 +268,7 @@ class AgentRunner:
             latency = int((time.perf_counter() - t0) * 1000)
             state.collected_messages = self.tools.serialize_messages(collected)
             state.participants = self.tools.serialize_participants(collected)
+            logger.info("Step get_messages_from completed: count=%s participants=%s", len(collected), len(state.participants))
             await tracer.save(
                 action="get_messages_from",
                 input_json={"chat_id": chat_id, "start_message_id": state.start_message_id, "before_message_id": end_message_id},
@@ -250,6 +279,7 @@ class AgentRunner:
             )
 
             if not collected:
+                logger.warning("Agent run has no collected messages; returning insufficient_data digest")
                 digest = (
                     "Недостаточно данных для осмысленного дайджеста. "
                     "В выбранном окне сообщений нет или они слишком короткие."
@@ -289,6 +319,7 @@ class AgentRunner:
             transcriptions = await self.tools.transcribe_media_messages(collected)
             latency = int((time.perf_counter() - t0) * 1000)
             state.transcriptions = transcriptions
+            logger.info("Step transcribe_media_messages completed: count=%s", len(transcriptions))
             await tracer.save(
                 action="transcribe_media_messages",
                 input_json={"count": len(collected)},
@@ -302,6 +333,7 @@ class AgentRunner:
             grouped_topics = await self.tools.group_messages_by_topic(collected)
             latency = int((time.perf_counter() - t0) * 1000)
             state.grouped_topics = grouped_topics
+            logger.info("Step group_messages_by_topic completed: topics=%s latency_ms=%s", len(grouped_topics), latency)
             await tracer.save(
                 action="group_messages_by_topic",
                 input_json={"count": len(collected)},
@@ -315,6 +347,7 @@ class AgentRunner:
             decisions = await self.tools.extract_decisions(collected)
             latency = int((time.perf_counter() - t0) * 1000)
             state.decisions = decisions
+            logger.info("Step extract_decisions completed: decisions=%s latency_ms=%s", len(decisions), latency)
             await tracer.save(
                 action="extract_decisions",
                 input_json={"count": len(collected)},
@@ -328,6 +361,7 @@ class AgentRunner:
             tasks = await self.tools.extract_tasks(collected)
             latency = int((time.perf_counter() - t0) * 1000)
             state.tasks = tasks
+            logger.info("Step extract_tasks completed: tasks=%s latency_ms=%s", len(tasks), latency)
             await tracer.save(
                 action="extract_tasks",
                 input_json={"count": len(collected)},
@@ -341,6 +375,7 @@ class AgentRunner:
             open_questions = await self.tools.extract_open_questions(collected)
             latency = int((time.perf_counter() - t0) * 1000)
             state.open_questions = open_questions
+            logger.info("Step extract_open_questions completed: open_questions=%s latency_ms=%s", len(open_questions), latency)
             await tracer.save(
                 action="extract_open_questions",
                 input_json={"count": len(collected)},
@@ -354,6 +389,7 @@ class AgentRunner:
             digest = await self.tools.generate_digest(state=state, messages=collected)
             latency = int((time.perf_counter() - t0) * 1000)
             state.final_digest = digest
+            logger.info("Step generate_digest completed: digest_len=%s latency_ms=%s", len(digest or ""), latency)
             await tracer.save(
                 action="generate_digest",
                 input_json={"topics": grouped_topics, "decisions": decisions, "tasks": tasks, "open_questions": open_questions},
@@ -367,6 +403,7 @@ class AgentRunner:
                 digest=digest,
                 source_messages=state.collected_messages,
             )
+            logger.info("Step evaluate_digest completed")
             evaluation_repo = DigestEvaluationRepository(self.session)
             await evaluation_repo.upsert(
                 run_id=run.id,
@@ -396,8 +433,10 @@ class AgentRunner:
             run.status = "completed"
             run.stop_reason = "completed"
             run.finished_at = utc_now()
+            logger.info("Agent run completed: run_id=%s", run.id)
             return run
         except Exception as exc:
+            logger.exception("Agent run failed: chat_id=%s user_id=%s", chat_id, user_id)
             await tracer.save(
                 action="runner_error",
                 input_json={"objective": objective},

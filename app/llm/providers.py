@@ -3,18 +3,33 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
+import logging
 import re
+import time
 from urllib import request
 
 from app.llm.base import LLMResponse
 
 
+logger = logging.getLogger(__name__)
+
+
 class MockLLMProvider:
     async def generate_text(self, *, system: str, prompt: str) -> LLMResponse:
+        logger.debug(
+            "Mock LLM text request: system_len=%s prompt_len=%s",
+            len(system or ""),
+            len(prompt or ""),
+        )
         text = self._render_text(system, prompt)
         return LLMResponse(text=text, raw={"provider": "mock"})
 
     async def generate_json(self, *, system: str, prompt: str) -> dict:
+        logger.debug(
+            "Mock LLM json request: system_len=%s prompt_len=%s",
+            len(system or ""),
+            len(prompt or ""),
+        )
         return self._render_json(system, prompt)
 
     def _render_text(self, system: str, prompt: str) -> str:
@@ -62,6 +77,15 @@ class OpenAICompatibleLLMProvider:
         self.timeout_seconds = timeout_seconds
 
     async def generate_text(self, *, system: str, prompt: str) -> LLMResponse:
+        logger.info(
+            "LLM text request started: model=%s base_url=%s system_len=%s prompt_len=%s timeout=%ss",
+            self.model,
+            self.base_url,
+            len(system or ""),
+            len(prompt or ""),
+            self.timeout_seconds,
+        )
+        started = time.perf_counter()
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
@@ -72,9 +96,21 @@ class OpenAICompatibleLLMProvider:
             .get("message", {})
             .get("content", "")
         )
+        logger.info(
+            "LLM text request finished: model=%s latency_ms=%s response_len=%s",
+            self.model,
+            int((time.perf_counter() - started) * 1000),
+            len(content or ""),
+        )
         return LLMResponse(text=content, raw=data)
 
     async def generate_json(self, *, system: str, prompt: str) -> dict:
+        logger.debug(
+            "LLM json request started: model=%s system_len=%s prompt_len=%s",
+            self.model,
+            len(system or ""),
+            len(prompt or ""),
+        )
         response = await self.generate_text(system=system, prompt=prompt)
         return self._extract_json(response.text)
 

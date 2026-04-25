@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import logging
 import json
+import logging
+import time
 from typing import Any
 
 from app.agent.state import AgentState
@@ -437,6 +438,8 @@ class AgentTools:
             for m in messages
         ]
         try:
+            logger.info("Grouping messages by topic: count=%s", len(payload))
+            started = time.perf_counter()
             result = await self.llm_provider.generate_json(
                 system=(
                     "Сгруппируй сообщения Telegram-чата по темам. "
@@ -449,6 +452,11 @@ class AgentTools:
             )
             topics = result.get("topics", [])
             if topics:
+                logger.info(
+                    "Grouped messages by topic: topics=%s latency_ms=%s",
+                    len(topics),
+                    int((time.perf_counter() - started) * 1000),
+                )
                 return topics
         except Exception as exc:
             logger.warning("Failed to group messages by topic: %s", exc)
@@ -465,6 +473,8 @@ class AgentTools:
             for m in messages
         ]
         try:
+            logger.info("Extracting decisions: count=%s", len(payload))
+            started = time.perf_counter()
             result = await self.llm_provider.generate_json(
                 system=(
                     "Извлеки только явные решения из обсуждения. "
@@ -474,7 +484,13 @@ class AgentTools:
                 ),
                 prompt=f"Messages JSON: {payload}",
             )
-            return result.get("decisions", [])
+            decisions = result.get("decisions", [])
+            logger.info(
+                "Extracted decisions: count=%s latency_ms=%s",
+                len(decisions),
+                int((time.perf_counter() - started) * 1000),
+            )
+            return decisions
         except Exception as exc:
             logger.warning("Failed to extract decisions: %s", exc)
             return []
@@ -490,6 +506,8 @@ class AgentTools:
             for m in messages
         ]
         try:
+            logger.info("Extracting tasks: count=%s", len(payload))
+            started = time.perf_counter()
             result = await self.llm_provider.generate_json(
                 system=(
                     "Извлеки только явные задачи или действия из обсуждения. "
@@ -501,7 +519,13 @@ class AgentTools:
                 ),
                 prompt=f"Messages JSON: {payload}",
             )
-            return result.get("tasks", [])
+            tasks = result.get("tasks", [])
+            logger.info(
+                "Extracted tasks: count=%s latency_ms=%s",
+                len(tasks),
+                int((time.perf_counter() - started) * 1000),
+            )
+            return tasks
         except Exception as exc:
             logger.warning("Failed to extract tasks: %s", exc)
             return []
@@ -517,6 +541,8 @@ class AgentTools:
             for m in messages
         ]
         try:
+            logger.info("Extracting open questions: count=%s", len(payload))
+            started = time.perf_counter()
             result = await self.llm_provider.generate_json(
                 system=(
                     "Извлеки только открытые вопросы, неопределённости, просьбы о прояснении или нерешённые сомнения. "
@@ -528,7 +554,13 @@ class AgentTools:
                 ),
                 prompt=f"Messages JSON: {payload}",
             )
-            return result.get("open_questions", [])
+            open_questions = result.get("open_questions", [])
+            logger.info(
+                "Extracted open questions: count=%s latency_ms=%s",
+                len(open_questions),
+                int((time.perf_counter() - started) * 1000),
+            )
+            return open_questions
         except Exception as exc:
             logger.warning("Failed to extract open questions: %s", exc)
             return []
@@ -541,9 +573,19 @@ class AgentTools:
         tasks = state.tasks or _extract_tasks_from_messages(payload)
         open_questions = state.open_questions or _extract_questions_from_messages(payload)
         warnings: list[str] = []
+        logger.info(
+            "Generating digest: participants=%s messages=%s topics=%s decisions=%s tasks=%s open_questions=%s",
+            len(participants),
+            len(payload),
+            len(topics),
+            len(decisions),
+            len(tasks),
+            len(open_questions),
+        )
 
         # Ask the LLM only for a better summary over already extracted structure.
         try:
+            started = time.perf_counter()
             summary_response = await self.llm_provider.generate_text(
                 system=(
                     "Напиши краткую, но конкретную сводку на русском языке для дайджеста Telegram-чата. "
@@ -567,6 +609,11 @@ class AgentTools:
             )
             summary_text = _normalize_text(summary_response.text)
             if summary_text and not _is_generic_summary(summary_text):
+                logger.info(
+                    "Digest summary accepted from LLM: summary_len=%s latency_ms=%s",
+                    len(summary_text),
+                    int((time.perf_counter() - started) * 1000),
+                )
                 return _render_from_agent_state(
                     participants=participants,
                     messages=payload,
@@ -578,10 +625,16 @@ class AgentTools:
                     warnings=warnings,
                 )
             warnings.append("LLM summary was empty or too generic, so the digest summary was assembled from extracted state.")
+            logger.info(
+                "Digest summary rejected as generic: summary_len=%s latency_ms=%s",
+                len(summary_text),
+                int((time.perf_counter() - started) * 1000),
+            )
         except Exception as exc:
             logger.warning("Failed to generate digest summary via LLM: %s", exc)
             warnings.append(f"LLM summary request failed: {exc}")
 
+        logger.info("Digest rendered from structured state: warnings=%s", len(warnings))
         return _render_from_agent_state(
             participants=participants,
             messages=payload,
@@ -597,10 +650,17 @@ class AgentTools:
             "digest": digest,
             "source_messages": [m.text or m.transcribed_text for m in source_messages],
         }
+        logger.info(
+            "Evaluating digest: digest_len=%s source_messages=%s",
+            len(digest or ""),
+            len(source_messages),
+        )
+        started = time.perf_counter()
         result = await self.llm_provider.generate_json(
             system="Evaluate the digest and return JSON with scoring fields.",
             prompt=str(payload),
         )
+        logger.info("Digest evaluation completed: latency_ms=%s", int((time.perf_counter() - started) * 1000))
         return result
 
     def serialize_messages(self, messages: list[Message]) -> list[dict]:

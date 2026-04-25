@@ -26,6 +26,7 @@ DEFAULT_WEBHOOK_URL = ""
 DEFAULT_BOT_USERNAME = ""
 DEFAULT_APP_NAME = "telegram-digest-agent"
 DEFAULT_LLM_TIMEOUT_SECONDS = 180
+DEFAULT_LOG_LEVEL = "INFO"
 
 
 def normalize_database_url(database_url: str) -> str:
@@ -52,6 +53,7 @@ class Settings:
     bot_username: str = DEFAULT_BOT_USERNAME
     app_name: str = DEFAULT_APP_NAME
     llm_timeout_seconds: int = DEFAULT_LLM_TIMEOUT_SECONDS
+    log_level: str = DEFAULT_LOG_LEVEL
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -102,6 +104,7 @@ class Settings:
             bot_username=env_or_default("BOT_USERNAME", DEFAULT_BOT_USERNAME),
             app_name=env_or_default("APP_NAME", DEFAULT_APP_NAME),
             llm_timeout_seconds=env_int_or_default("LLM_TIMEOUT_SECONDS", DEFAULT_LLM_TIMEOUT_SECONDS),
+            log_level=env_or_default("LOG_LEVEL", DEFAULT_LOG_LEVEL),
         )
 
 

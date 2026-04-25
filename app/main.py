@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from fastapi import FastAPI
 
@@ -12,8 +13,26 @@ from app.models import agent_run, agent_trace, chat, digest_evaluation, message,
 from app.telegram.bot import setup_bot
 
 
+logger = logging.getLogger(__name__)
+
+
+def configure_logging(level_name: str) -> None:
+    level = getattr(logging, level_name.upper(), logging.INFO)
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=level,
+            format="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
+        )
+    else:
+        root.setLevel(level)
+        for handler in root.handlers:
+            handler.setLevel(level)
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
+    configure_logging(settings.log_level)
     engine, session_factory = create_engine_and_session_factory(settings.database_url)
     app = FastAPI(title="Telegram Digest Agent", version="0.1.0")
     app.state.settings = settings
@@ -23,6 +42,12 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def on_startup() -> None:
+        logger.info(
+            "Starting API app: mode=%s llm_model=%s transcription_mode=%s",
+            settings.bot_mode,
+            settings.llm_model,
+            settings.transcription_mode,
+        )
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         bot, dispatcher = await setup_bot(session_factory, settings)
@@ -42,6 +67,13 @@ def create_app() -> FastAPI:
 
 async def run_polling() -> None:
     settings = get_settings()
+    configure_logging(settings.log_level)
+    logger.info(
+        "Starting polling bot: llm_model=%s transcription_mode=%s proxy=%s",
+        settings.llm_model,
+        settings.transcription_mode,
+        "enabled" if settings.telegram_proxy_url else "disabled",
+    )
     engine, session_factory = create_engine_and_session_factory(settings.database_url)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -51,6 +83,7 @@ async def run_polling() -> None:
 
 if __name__ == "__main__":
     settings = get_settings()
+    configure_logging(settings.log_level)
     if settings.bot_mode.lower() == "polling":
         asyncio.run(run_polling())
     else:

@@ -26,9 +26,17 @@ class TelegramMediaTranscriber:
         if not getattr(message, "file_id", None):
             return None
         message_type = getattr(message, "message_type", "audio")
+        logger.info(
+            "Transcribing media message: message_id=%s type=%s file_id=%s provider=%s",
+            getattr(message, "telegram_message_id", None),
+            message_type,
+            message.file_id,
+            type(self.provider).__name__,
+        )
         with tempfile.TemporaryDirectory(prefix="digestbot-media-") as tmpdir:
             tmpdir_path = Path(tmpdir)
             downloaded = await self._download(message.file_id, tmpdir_path / self._target_filename(message))
+            logger.debug("Downloaded media message: message_id=%s path=%s", getattr(message, "telegram_message_id", None), downloaded)
             source_path = downloaded
             if message_type == "video_note":
                 converted = await asyncio.to_thread(self._convert_video_note, downloaded, tmpdir_path)
@@ -43,6 +51,11 @@ class TelegramMediaTranscriber:
                 mime_type=self._mime_type(message_type),
             )
             message.transcribed_text = result.text
+            logger.info(
+                "Transcription finished: message_id=%s text_len=%s",
+                getattr(message, "telegram_message_id", None),
+                len(result.text or ""),
+            )
             return result.text
 
     async def _download(self, file_id: str, destination: Path) -> Path:
