@@ -87,6 +87,27 @@ def build_digest_prompt(messages: list[dict], language_hint: str = "ru", structu
     return base + "The digest should be detailed but still concise enough to read in under a minute.\n" + f"Messages:\n{transcript}"
 
 
+def build_clarification_prompt(
+    *,
+    digest: str,
+    question: str,
+    messages: list[dict[str, Any]] | None = None,
+    language_hint: str = "ru",
+) -> str:
+    messages_block = format_messages_for_digest(messages or [])
+    return (
+        f"Language: {language_hint}\n"
+        "Ты отвечаешь на уточняющий вопрос по уже сформированному дайджесту Telegram-чата.\n"
+        "Используй только сведения из дайджеста и, если они есть, из исходных сообщений.\n"
+        "Не придумывай новых фактов, решений или участников.\n"
+        "Если данных недостаточно, честно скажи, чего не хватает для точного ответа.\n"
+        "Отвечай по-русски, конкретно и без лишней воды.\n\n"
+        f"Дайджест:\n{digest}\n\n"
+        f"Исходные сообщения:\n{messages_block or 'нет'}\n\n"
+        f"Вопрос пользователя:\n{question}\n"
+    )
+
+
 def render_structured_digest(payload: dict[str, Any]) -> str:
     summary = str(payload.get("summary") or "Нет краткого резюме.").strip()
     topics = payload.get("topics") or []

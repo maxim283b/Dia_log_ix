@@ -24,6 +24,7 @@ from app.transcription.providers import (
     SimpleHTTPTranscriptionProvider,
 )
 from app.transcription.service import TelegramMediaTranscriber
+from app.utils.digest import build_clarification_prompt
 from app.utils.telegram import get_message_text, is_command_message, is_digest_trigger
 
 logger = logging.getLogger(__name__)
@@ -97,19 +98,27 @@ def register_routes(dispatcher: Dispatcher, bot: Bot, session_factory, settings:
     async def start_handler(message: Message) -> None:
         await message.answer(
             "Я собираю дайджесты групповых чатов.\n"
-            "Команды: /help, /digest, /tasks, /decisions."
+            "Команды: /help, /digest, /ask, /tasks, /decisions."
         )
 
     @router.message(Command("help"))
     async def help_handler(message: Message) -> None:
         await message.answer(
             "Отправь /digest или упомяни бота в группе. "
-            "Я возьму сообщения после твоего прошлого сообщения и соберу дайджест."
+            "После дайджеста можно задать уточняющий вопрос командой /ask <вопрос>."
         )
 
     @router.message(Command("digest"))
     async def digest_command(message: Message) -> None:
         await _handle_digest(message, bot, session_factory, settings)
+
+    @router.message(Command("ask"))
+    async def ask_handler(message: Message) -> None:
+        await _handle_clarification(message, session_factory, settings)
+
+    @router.message(Command("clarify"))
+    async def clarify_handler(message: Message) -> None:
+        await _handle_clarification(message, session_factory, settings)
 
     @router.message(Command("tasks"))
     async def tasks_handler(message: Message) -> None:
@@ -224,6 +233,45 @@ async def _handle_digest(message: Message, bot: Bot, session_factory, settings: 
         await message.answer(run.final_digest or "Дайджест не удалось сформировать.")
 
 
+async def _handle_clarification(message: Message, session_factory, settings: Settings) -> None:
+    if message.chat is None:
+        return
+    question = _extract_command_arguments(message.text or "")
+    if not question:
+        await message.answer("Напиши вопрос после команды, например: /ask кто что предложил?")
+        return
+    async with session_factory() as session:
+        run_repo = AgentRunRepository(session)
+        run = await run_repo.get_latest_completed(message.chat.id)
+        if run is None or not run.final_digest:
+            await message.answer("Сначала сформируй дайджест командой /digest.")
+            return
+        llm = build_llm_provider(settings)
+        prompt = build_clarification_prompt(
+            digest=run.final_digest,
+            question=question,
+            messages=run.collected_messages or [],
+        )
+        try:
+            response = await llm.generate_text(
+                system=(
+                    "You answer clarification questions about a Telegram chat digest. "
+                    "Use only the provided digest and messages."
+                ),
+                prompt=prompt,
+            )
+            answer = (response.text or "").strip()
+        except Exception as exc:
+            logger.exception("Failed to generate clarification answer: %s", exc)
+            answer = ""
+        if not answer:
+            answer = (
+                "Не удалось получить уточнение от модели. "
+                f"Последний дайджест:\n{run.final_digest}"
+            )
+        await message.answer(answer)
+
+
 async def _handle_tasks(message: Message, session_factory) -> None:
     if message.chat is None:
         return
@@ -256,3 +304,10 @@ async def _handle_decisions(message: Message, session_factory) -> None:
             title = decision.get("title") or decision.get("decision") or str(decision)
             lines.append(f"{idx}. {title}")
         await message.answer("\n".join(lines))
+
+
+def _extract_command_arguments(text: str) -> str:
+    parts = text.strip().split(maxsplit=1)
+    if len(parts) < 2:
+        return ""
+    return parts[1].strip()
