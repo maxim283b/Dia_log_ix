@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import Any
+import re
 
 
 def format_messages_for_digest(messages: Iterable[dict]) -> str:
@@ -12,6 +13,15 @@ def format_messages_for_digest(messages: Iterable[dict]) -> str:
         text = item.get("resolved_text") or item.get("text") or ""
         lines.append(f"[{stamp}] {author}: {text}")
     return "\n".join(lines)
+
+
+def _strip_markdown(text: str) -> str:
+    text = str(text or "")
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"__(.*?)__", r"\1", text)
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+    text = text.replace("*", "")
+    return " ".join(text.split()).strip()
 
 
 def messages_to_digest_payload(messages: Iterable[dict]) -> dict:
@@ -109,7 +119,7 @@ def build_clarification_prompt(
 
 
 def render_structured_digest(payload: dict[str, Any]) -> str:
-    summary = str(payload.get("summary") or "Нет краткого резюме.").strip()
+    summary = _strip_markdown(payload.get("summary") or "Нет краткого резюме.")
     topics = payload.get("topics") or []
     decisions = payload.get("decisions") or []
     tasks = payload.get("tasks") or []
@@ -124,8 +134,8 @@ def render_structured_digest(payload: dict[str, Any]) -> str:
     if topics:
         for idx, topic in enumerate(topics, start=1):
             if isinstance(topic, dict):
-                title = str(topic.get("title") or topic.get("topic") or "Без названия").strip()
-                who = str(topic.get("who_said_what") or topic.get("details") or topic.get("who") or "").strip()
+                title = _strip_markdown(topic.get("title") or topic.get("topic") or "Без названия")
+                who = _strip_markdown(topic.get("who_said_what") or topic.get("details") or topic.get("who") or "")
                 parts = [title]
                 if who:
                     parts.append(who)
@@ -139,12 +149,12 @@ def render_structured_digest(payload: dict[str, Any]) -> str:
     if decisions:
         for idx, decision in enumerate(decisions, start=1):
             if isinstance(decision, dict):
-                who = str(decision.get("who") or decision.get("owner") or "").strip()
-                text = str(decision.get("text") or decision.get("decision") or "").strip()
+                who = _strip_markdown(decision.get("who") or decision.get("owner") or "")
+                text = _strip_markdown(decision.get("text") or decision.get("decision") or "")
                 if who and text:
                     lines.append(f"{idx}. {who}: {text}")
-                else:
-                    lines.append(f"{idx}. {text or who or 'Без деталей'}")
+                elif text:
+                    lines.append(f"{idx}. {text}")
             else:
                 lines.append(f"{idx}. {str(decision).strip()}")
     else:
@@ -154,19 +164,21 @@ def render_structured_digest(payload: dict[str, Any]) -> str:
     if tasks:
         for idx, task in enumerate(tasks, start=1):
             if isinstance(task, dict):
-                who = str(task.get("who") or task.get("owner") or "").strip()
-                what = str(task.get("what") or task.get("task") or "").strip()
-                deadline = str(task.get("deadline") or task.get("when") or "").strip()
+                who = _strip_markdown(task.get("who") or task.get("owner") or "")
+                what = _strip_markdown(task.get("what") or task.get("task") or "")
+                deadline = _strip_markdown(task.get("deadline") or task.get("when") or "")
                 parts = []
-                if who:
-                    parts.append(who)
+                if not what:
+                    continue
                 if what:
                     parts.append(what)
+                if who and what:
+                    parts.append(f"ответственный: {who}")
                 if deadline:
-                    parts.append(f"deadline: {deadline}")
-                lines.append(f"{idx}. " + " — ".join(parts or ["Без деталей"]))
+                    parts.append(f"срок: {deadline}")
+                lines.append(f"{idx}. " + " — ".join(parts))
             else:
-                lines.append(f"{idx}. {str(task).strip()}")
+                lines.append(f"{idx}. {_strip_markdown(str(task).strip())}")
     else:
         lines.append("Явных задач нет.")
     lines.append("")
@@ -174,21 +186,21 @@ def render_structured_digest(payload: dict[str, Any]) -> str:
     if open_questions:
         for idx, question in enumerate(open_questions, start=1):
             if isinstance(question, dict):
-                who = str(question.get("who") or question.get("author") or "").strip()
-                text = str(question.get("question") or question.get("text") or "").strip()
+                who = _strip_markdown(question.get("who") or question.get("author") or "")
+                text = _strip_markdown(question.get("question") or question.get("text") or "")
                 if who and text:
                     lines.append(f"{idx}. {who}: {text}")
-                else:
-                    lines.append(f"{idx}. {text or who or 'Без деталей'}")
+                elif text:
+                    lines.append(f"{idx}. {text}")
             else:
-                lines.append(f"{idx}. {str(question).strip()}")
+                lines.append(f"{idx}. {_strip_markdown(str(question).strip())}")
     else:
         lines.append("Открытых вопросов нет.")
     lines.append("")
     lines.append("Предупреждения")
     if warnings:
         for idx, warning in enumerate(warnings, start=1):
-            lines.append(f"{idx}. {str(warning).strip()}")
+            lines.append(f"{idx}. {_strip_markdown(str(warning).strip())}")
     else:
         lines.append("Предупреждений нет.")
     return "\n".join(lines)
@@ -235,6 +247,8 @@ def normalize_named_items(items: list[Any], *, text_keys: tuple[str, ...], who_k
             who = ""
             text = str(item).strip()
         if not who and not text:
+            continue
+        if not text:
             continue
         key = (who.lower(), text.lower())
         if key in seen:

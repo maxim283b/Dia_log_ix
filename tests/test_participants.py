@@ -142,3 +142,21 @@ def test_render_structured_digest_omits_evidence():
     assert "Открытые вопросы" in digest
     assert "Предупреждения" in digest
     assert "**" not in digest
+
+
+def test_render_structured_digest_skips_who_only_tasks_and_cleans_markdown():
+    digest = render_structured_digest(
+        {
+            "summary": "**Краткая сводка**",
+            "topics": [],
+            "decisions": [{"who": "Артемий", "text": ""}],
+            "tasks": [{"who": "Артемий", "what": ""}],
+            "open_questions": [{"who": "Максим", "question": "**Что дальше?**"}],
+            "warnings": ["**Нет предупреждений**"],
+        }
+    )
+
+    assert "**" not in digest
+    assert "Артемий" not in digest.split("Задачи", 1)[1]
+    assert "Что дальше?" in digest
+    assert "Нет предупреждений" in digest
