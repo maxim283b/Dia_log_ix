@@ -160,3 +160,22 @@ def test_render_structured_digest_skips_who_only_tasks_and_cleans_markdown():
     assert "Артемий" not in digest.split("Задачи", 1)[1]
     assert "Что дальше?" in digest
     assert "Нет предупреждений" in digest
+
+
+def test_time_based_plans_are_extracted_as_tasks():
+    from app.agent.tools import _extract_tasks_from_messages
+
+    messages = [
+        {
+            "author_display_name": "Максим Борисов",
+            "text": "собираюсь встретиться с друзьями в 19:00 и сходить в новое заведение",
+            "resolved_text": "собираюсь встретиться с друзьями в 19:00 и сходить в новое заведение",
+            "message_type": "text",
+        }
+    ]
+
+    tasks = _extract_tasks_from_messages(messages)
+
+    assert tasks
+    assert "19:00" in tasks[0]["what"]
+    assert "встретиться" in tasks[0]["what"]

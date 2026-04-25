@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import re
 from typing import Any
 
 from app.agent.state import AgentState
@@ -203,6 +204,41 @@ def _clean_snippet(text: str, limit: int = 140) -> str:
     return text[: max(0, limit - 1)].rstrip() + "…"
 
 
+_TIME_REFERENCE_RE = re.compile(
+    r"\b(?:\d{1,2}[:.]\d{2}|\d{1,2}\s?(?:ч|час(?:а|ов)?)|(?:сегодня|завтра|послезавтра)\b)",
+    flags=re.IGNORECASE,
+)
+
+
+def _has_time_reference(text: str) -> bool:
+    return bool(_TIME_REFERENCE_RE.search(_normalize_text(text)))
+
+
+def _extract_planned_time_tasks_from_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    tasks: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in messages:
+        text = _normalize_text(item.get("resolved_text") or item.get("text"))
+        lowered = text.lower()
+        if not text or not _has_time_reference(text):
+            continue
+        if not any(keyword in lowered for keyword in ("встреч", "сход", "ид", "закаж", "закажу", "закажешь", "поед", "созвон", "созвони", "позвон", "встрет", "планир", "собираюсь", "вечером", "после")):
+            continue
+        key = lowered[:160]
+        if key in seen:
+            continue
+        seen.add(key)
+        tasks.append(
+            {
+                "who": _normalize_text(item.get("author_display_name") or item.get("author") or ""),
+                "what": _clean_snippet(text, 180),
+            }
+        )
+        if len(tasks) >= 2:
+            break
+    return tasks
+
+
 def _extract_questions_from_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
     questions: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -236,7 +272,10 @@ def _extract_tasks_from_messages(messages: list[dict[str, Any]]) -> list[dict[st
         lowered = text.lower()
         if not text:
             continue
-        if not any(keyword in lowered for keyword in ("надо", "нужно", "стоит", "планирую", "собираюсь", "хочу", "давай", "можно", "попробовать", "купить", "сделать", "перестать", "посмотреть")):
+        if not (
+            any(keyword in lowered for keyword in ("надо", "нужно", "стоит", "планирую", "собираюсь", "хочу", "давай", "можно", "попробовать", "купить", "сделать", "перестать", "посмотреть"))
+            or _has_time_reference(text)
+        ):
             continue
         key = lowered[:160]
         if key in seen:
@@ -342,6 +381,11 @@ def _render_from_agent_state(
     normalized_decisions = normalize_named_items(decisions, text_keys=("text", "decision", "title"), who_keys=("who", "owner"))
     normalized_tasks = normalize_named_items(tasks, text_keys=("what", "task", "text"), who_keys=("who", "owner"))
     normalized_questions = normalize_named_items(open_questions, text_keys=("question", "text"), who_keys=("who", "author"))
+    normalized_time_tasks = normalize_named_items(
+        _extract_planned_time_tasks_from_messages(messages),
+        text_keys=("what", "task", "text"),
+        who_keys=("who", "owner"),
+    )
     summary = summary_override or _derive_summary_from_topics(
         {
             "topics": normalized_topics,
@@ -354,7 +398,7 @@ def _render_from_agent_state(
             "summary": summary,
             "topics": normalized_topics,
             "decisions": normalized_decisions,
-            "tasks": normalized_tasks,
+            "tasks": normalized_tasks + normalized_time_tasks,
             "open_questions": normalized_questions,
             "warnings": warnings or [],
         }
@@ -448,7 +492,7 @@ class AgentTools:
                     "Верни строгий JSON с массивом 'topics'. "
                     "Не придумывай темы, которых нет в сообщениях. "
                     "Все поля, заголовки и краткие описания должны быть на русском языке. "
-                    "По возможности укажи, кто что сказал, внутри описания темы."
+                    "По возможности укажи, кто что сказал, и обязательно сохраняй конкретные факты: время, даты, места, людей, планы и причинно-следственные связи."
                 ),
                 prompt=f"Messages JSON: {payload}",
             )
@@ -482,7 +526,8 @@ class AgentTools:
                     "Извлеки только явные решения из обсуждения. "
                     "Верни строгий JSON с массивом 'decisions'. "
                     "Если решений нет, верни пустой массив. "
-                    "Каждое решение и имя участника должны быть на русском языке, если имя известно."
+                    "Каждое решение и имя участника должны быть на русском языке, если имя известно. "
+                    "Извлекай только действительно согласованные решения, а не шутки, эмоции или общие обсуждения."
                 ),
                 prompt=f"Messages JSON: {payload}",
             )
@@ -517,7 +562,8 @@ class AgentTools:
                     "Если задач нет, верни пустой массив. "
                     "Сохраняй имя участника в каждой задаче, если оно известно. "
                     "Предпочитай поля who/owner, what, deadline. "
-                    "Все текстовые поля должны быть на русском языке."
+                    "Все текстовые поля должны быть на русском языке. "
+                    "Если в сообщении есть конкретное время, дата, срок, место встречи или другой план, обязательно включай это в задачу."
                 ),
                 prompt=f"Messages JSON: {payload}",
             )
@@ -552,7 +598,8 @@ class AgentTools:
                     "Если открытых вопросов нет, верни пустой массив. "
                     "Сохраняй имя участника, если оно известно. "
                     "Предпочитай поля who, question, context. "
-                    "Все текстовые поля должны быть на русском языке."
+                    "Все текстовые поля должны быть на русском языке. "
+                    "Сохраняй конкретику: кто, что, когда, где, какой вариант обсуждается."
                 ),
                 prompt=f"Messages JSON: {payload}",
             )
@@ -595,6 +642,7 @@ class AgentTools:
                     "Не придумывай факты. "
                     "Не используй английский язык ни в сводке, ни в названиях тем, ни в формулировках полей. "
                     "Сохраняй имена, даты и числовые факты как есть. "
+                    "Обязательно передай важные планы, время, дедлайны, участников и итоговые договорённости. "
                     "Ограничься 1-3 предложениями."
                 ),
                 prompt=json.dumps(
