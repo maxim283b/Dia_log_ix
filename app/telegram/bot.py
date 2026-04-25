@@ -233,6 +233,7 @@ async def _handle_digest(message: Message, bot: Bot, session_factory, settings: 
             llm_provider=llm,
             transcription_provider=transcription,
             media_transcriber=media_transcriber,
+            llm_summary_timeout_seconds=settings.llm_summary_timeout_seconds,
         )
         evaluator = DigestEvaluator(llm)
         user_repo = UserRepository(session)

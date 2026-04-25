@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class MockLLMProvider:
-    async def generate_text(self, *, system: str, prompt: str) -> LLMResponse:
+    async def generate_text(self, *, system: str, prompt: str, timeout_seconds: int | None = None) -> LLMResponse:
         logger.debug(
             "Mock LLM text request: system_len=%s prompt_len=%s",
             len(system or ""),
@@ -24,7 +24,7 @@ class MockLLMProvider:
         text = self._render_text(system, prompt)
         return LLMResponse(text=text, raw={"provider": "mock"})
 
-    async def generate_json(self, *, system: str, prompt: str) -> dict:
+    async def generate_json(self, *, system: str, prompt: str, timeout_seconds: int | None = None) -> dict:
         logger.debug(
             "Mock LLM json request: system_len=%s prompt_len=%s",
             len(system or ""),
@@ -76,21 +76,28 @@ class OpenAICompatibleLLMProvider:
         self.model = model
         self.timeout_seconds = timeout_seconds
 
-    async def generate_text(self, *, system: str, prompt: str) -> LLMResponse:
+    async def generate_text(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        timeout_seconds: int | None = None,
+    ) -> LLMResponse:
+        effective_timeout = timeout_seconds or self.timeout_seconds
         logger.info(
             "LLM text request started: model=%s base_url=%s system_len=%s prompt_len=%s timeout=%ss",
             self.model,
             self.base_url,
             len(system or ""),
             len(prompt or ""),
-            self.timeout_seconds,
+            effective_timeout,
         )
         started = time.perf_counter()
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         }
-        data = await asyncio.to_thread(self._post_json, "/chat/completions", payload)
+        data = await asyncio.to_thread(self._post_json, "/chat/completions", payload, effective_timeout)
         content = (
             data.get("choices", [{}])[0]
             .get("message", {})
@@ -104,17 +111,17 @@ class OpenAICompatibleLLMProvider:
         )
         return LLMResponse(text=content, raw=data)
 
-    async def generate_json(self, *, system: str, prompt: str) -> dict:
+    async def generate_json(self, *, system: str, prompt: str, timeout_seconds: int | None = None) -> dict:
         logger.debug(
             "LLM json request started: model=%s system_len=%s prompt_len=%s",
             self.model,
             len(system or ""),
             len(prompt or ""),
         )
-        response = await self.generate_text(system=system, prompt=prompt)
+        response = await self.generate_text(system=system, prompt=prompt, timeout_seconds=timeout_seconds)
         return self._extract_json(response.text)
 
-    def _post_json(self, path: str, payload: dict) -> dict:
+    def _post_json(self, path: str, payload: dict, timeout_seconds: int) -> dict:
         body = json.dumps(payload).encode("utf-8")
         req = request.Request(
             f"{self.base_url}{path}",
@@ -126,11 +133,11 @@ class OpenAICompatibleLLMProvider:
             method="POST",
         )
         try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as resp:
+            with request.urlopen(req, timeout=timeout_seconds) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except TimeoutError as exc:
             raise TimeoutError(
-                f"LLM request timed out after {self.timeout_seconds}s for {path}"
+                f"LLM request timed out after {timeout_seconds}s for {path}"
             ) from exc
 
     def _extract_json(self, text: str) -> dict:

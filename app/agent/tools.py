@@ -369,11 +369,13 @@ class AgentTools:
         llm_provider: LLMProvider,
         transcription_provider: TranscriptionProvider,
         media_transcriber: TelegramMediaTranscriber | None = None,
+        llm_summary_timeout_seconds: int = 45,
     ) -> None:
         self.message_repository = message_repository
         self.llm_provider = llm_provider
         self.transcription_provider = transcription_provider
         self.media_transcriber = media_transcriber
+        self.llm_summary_timeout_seconds = llm_summary_timeout_seconds
 
     async def get_last_user_message(self, *, chat_id: int, user_id: int, before_message_id: int) -> Message | None:
         return await self.message_repository.get_last_user_message_before(chat_id, user_id, before_message_id)
@@ -589,7 +591,7 @@ class AgentTools:
             summary_response = await self.llm_provider.generate_text(
                 system=(
                     "Напиши краткую, но конкретную сводку на русском языке для дайджеста Telegram-чата. "
-                    "Используй только предоставленные структурированные данные и фрагменты сообщений. "
+                    "Используй только предоставленные структурированные данные. "
                     "Не придумывай факты. "
                     "Не используй английский язык ни в сводке, ни в названиях тем, ни в формулировках полей. "
                     "Сохраняй имена, даты и числовые факты как есть. "
@@ -602,10 +604,10 @@ class AgentTools:
                         "decisions": decisions,
                         "tasks": tasks,
                         "open_questions": open_questions,
-                        "messages": payload[:12],
                     },
                     ensure_ascii=False,
                 ),
+                timeout_seconds=self.llm_summary_timeout_seconds,
             )
             summary_text = _normalize_text(summary_response.text)
             if summary_text and not _is_generic_summary(summary_text):
