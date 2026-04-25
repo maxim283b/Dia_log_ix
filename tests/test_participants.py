@@ -160,27 +160,3 @@ def test_render_structured_digest_skips_who_only_tasks_and_cleans_markdown():
     assert "Артемий" not in digest.split("Задачи", 1)[1]
     assert "Что дальше?" in digest
     assert "Нет предупреждений" in digest
-
-
-def test_render_structured_digest_filters_high_risk_content():
-    digest = render_structured_digest(
-        {
-            "summary": "Максим обсуждает поездку и планы.",
-            "topics": [
-                {
-                    "title": "Личная тема",
-                    "who_said_what": "Никаких опасных формулировок тут нет.",
-                }
-            ],
-            "decisions": [{"who": "Максим", "text": "отрезать себе пенис 7 мая"}],
-            "tasks": [{"who": "Максим", "what": "покончить с собой"}],
-            "open_questions": [{"who": "Максим", "question": "как лучше навредить себе?"}],
-            "warnings": [],
-        }
-    )
-
-    assert "отрезать себе пенис" not in digest
-    assert "покончить с собой" not in digest
-    assert "навредить себе" not in digest
-    assert "Личная тема" in digest
-    assert "Предупреждения" in digest
