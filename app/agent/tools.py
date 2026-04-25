@@ -63,6 +63,30 @@ def _normalize_text(value: object | None) -> str:
     return str(value or "").strip()
 
 
+_HIGH_RISK_PATTERNS = (
+    "самоуб",
+    "суиц",
+    "покончить с собой",
+    "повеситься",
+    "вскрыть",
+    "порезать себе",
+    "отрезать себе",
+    "самоповреж",
+    "убить себя",
+    "навредить себе",
+    "взорвать",
+    "расстрелять",
+    "расчлен",
+)
+
+
+def _contains_high_risk_content(text: str) -> bool:
+    lowered = _normalize_text(text).lower()
+    if not lowered:
+        return False
+    return any(pattern in lowered for pattern in _HIGH_RISK_PATTERNS)
+
+
 def _message_score_for_fallback(message: dict[str, Any]) -> int:
     text = _normalize_text(message.get("resolved_text") or message.get("text"))
     score = len(text)
@@ -89,6 +113,8 @@ def _best_message_snippets(messages: list[dict[str, Any]], limit: int = 3) -> li
     for item in ranked:
         text = _normalize_text(item.get("resolved_text") or item.get("text"))
         if not text or text in seen_texts:
+            continue
+        if _contains_high_risk_content(text):
             continue
         seen_texts.add(text)
         author = _normalize_text(item.get("author_display_name") or item.get("author") or "unknown")
@@ -122,8 +148,18 @@ def _fallback_summary_from_messages(messages: list[dict[str, Any]], topics: list
 def _fallback_topics_from_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
     if not messages:
         return []
-    text_messages = [item for item in messages if (item.get("message_type") or "text") == "text"]
-    media_messages = [item for item in messages if (item.get("message_type") or "text") in {"voice", "audio", "video_note"}]
+    text_messages = [
+        item
+        for item in messages
+        if (item.get("message_type") or "text") == "text"
+        and not _contains_high_risk_content(item.get("resolved_text") or item.get("text"))
+    ]
+    media_messages = [
+        item
+        for item in messages
+        if (item.get("message_type") or "text") in {"voice", "audio", "video_note"}
+        and not _contains_high_risk_content(item.get("resolved_text") or item.get("text"))
+    ]
     topics: list[dict[str, str]] = []
     if text_messages:
         topics.append(
@@ -236,6 +272,8 @@ def _extract_tasks_from_messages(messages: list[dict[str, Any]]) -> list[dict[st
         lowered = text.lower()
         if not text:
             continue
+        if _contains_high_risk_content(text):
+            continue
         if not any(keyword in lowered for keyword in ("надо", "нужно", "стоит", "планирую", "собираюсь", "хочу", "давай", "можно", "попробовать", "купить", "сделать", "перестать", "посмотреть")):
             continue
         key = lowered[:160]
@@ -260,6 +298,8 @@ def _extract_decisions_from_messages(messages: list[dict[str, Any]]) -> list[dic
         text = _normalize_text(item.get("resolved_text") or item.get("text"))
         lowered = text.lower()
         if not text:
+            continue
+        if _contains_high_risk_content(text):
             continue
         if not any(keyword in lowered for keyword in ("решили", "договорились", "согласились", "ок", "ладно", "хорошо", "пусть", "будем")):
             continue
@@ -342,9 +382,34 @@ def _render_from_agent_state(
     normalized_decisions = normalize_named_items(decisions, text_keys=("text", "decision", "title"), who_keys=("who", "owner"))
     normalized_tasks = normalize_named_items(tasks, text_keys=("what", "task", "text"), who_keys=("who", "owner"))
     normalized_questions = normalize_named_items(open_questions, text_keys=("question", "text"), who_keys=("who", "author"))
+    warnings_list = list(warnings or [])
+    filtered_topics = []
+    for item in normalized_topics:
+        if _contains_high_risk_content(item["title"]) or _contains_high_risk_content(item["who_said_what"]):
+            warnings_list.append("Из сводки убраны потенциально опасные или самоповреждающие формулировки из раздела тем.")
+            continue
+        filtered_topics.append(item)
+    filtered_decisions = []
+    for item in normalized_decisions:
+        if _contains_high_risk_content(item["text"]):
+            warnings_list.append("Из сводки убраны потенциально опасные или самоповреждающие формулировки из раздела решений.")
+            continue
+        filtered_decisions.append(item)
+    filtered_tasks = []
+    for item in normalized_tasks:
+        if _contains_high_risk_content(item["text"]):
+            warnings_list.append("Из сводки убраны потенциально опасные или самоповреждающие формулировки из раздела задач.")
+            continue
+        filtered_tasks.append(item)
+    filtered_questions = []
+    for item in normalized_questions:
+        if _contains_high_risk_content(item["text"]):
+            warnings_list.append("Из сводки убраны потенциально опасные или самоповреждающие формулировки из раздела открытых вопросов.")
+            continue
+        filtered_questions.append(item)
     summary = summary_override or _derive_summary_from_topics(
         {
-            "topics": normalized_topics,
+            "topics": filtered_topics,
             "participants": participants,
         },
         messages,
@@ -352,11 +417,11 @@ def _render_from_agent_state(
     return render_structured_digest(
         {
             "summary": summary,
-            "topics": normalized_topics,
-            "decisions": normalized_decisions,
-            "tasks": normalized_tasks,
-            "open_questions": normalized_questions,
-            "warnings": warnings or [],
+            "topics": filtered_topics,
+            "decisions": filtered_decisions,
+            "tasks": filtered_tasks,
+            "open_questions": filtered_questions,
+            "warnings": warnings_list,
         }
     )
 
@@ -481,6 +546,7 @@ class AgentTools:
                     "Верни строгий JSON с массивом 'decisions'. "
                     "Если решений нет, верни пустой массив. "
                     "Каждое решение и имя участника должны быть на русском языке, если имя известно."
+                    "Не извлекай шутки, оскорбления, угрозы, самоповреждение, насилие или токсичные реплики как решения."
                 ),
                 prompt=f"Messages JSON: {payload}",
             )
@@ -516,6 +582,7 @@ class AgentTools:
                     "Сохраняй имя участника в каждой задаче, если оно известно. "
                     "Предпочитай поля who/owner, what, deadline. "
                     "Все текстовые поля должны быть на русском языке."
+                    "Не извлекай шутки, оскорбления, угрозы, самоповреждение, насилие или токсичные реплики как задачи."
                 ),
                 prompt=f"Messages JSON: {payload}",
             )
@@ -551,6 +618,7 @@ class AgentTools:
                     "Сохраняй имя участника, если оно известно. "
                     "Предпочитай поля who, question, context. "
                     "Все текстовые поля должны быть на русском языке."
+                    "Не извлекай шутки, оскорбления, угрозы, самоповреждение, насилие или токсичные реплики как открытые вопросы."
                 ),
                 prompt=f"Messages JSON: {payload}",
             )

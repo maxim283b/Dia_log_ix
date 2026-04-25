@@ -5,6 +5,30 @@ from typing import Any
 import re
 
 
+_HIGH_RISK_PATTERNS = (
+    "самоуб",
+    "суиц",
+    "покончить с собой",
+    "повеситься",
+    "вскрыть",
+    "порезать себе",
+    "отрезать себе",
+    "самоповреж",
+    "убить себя",
+    "навредить себе",
+    "взорвать",
+    "расстрелять",
+    "расчлен",
+)
+
+
+def _contains_high_risk_content(text: str) -> bool:
+    lowered = _strip_markdown(text).lower()
+    if not lowered:
+        return False
+    return any(pattern in lowered for pattern in _HIGH_RISK_PATTERNS)
+
+
 def format_messages_for_digest(messages: Iterable[dict]) -> str:
     lines: list[str] = []
     for item in messages:
@@ -136,6 +160,8 @@ def render_structured_digest(payload: dict[str, Any]) -> str:
             if isinstance(topic, dict):
                 title = _strip_markdown(topic.get("title") or topic.get("topic") or "Без названия")
                 who = _strip_markdown(topic.get("who_said_what") or topic.get("details") or topic.get("who") or "")
+                if _contains_high_risk_content(title) or _contains_high_risk_content(who):
+                    continue
                 parts = [title]
                 if who:
                     parts.append(who)
@@ -151,6 +177,8 @@ def render_structured_digest(payload: dict[str, Any]) -> str:
             if isinstance(decision, dict):
                 who = _strip_markdown(decision.get("who") or decision.get("owner") or "")
                 text = _strip_markdown(decision.get("text") or decision.get("decision") or "")
+                if _contains_high_risk_content(text):
+                    continue
                 if who and text:
                     lines.append(f"{idx}. {who}: {text}")
                 elif text:
@@ -167,6 +195,8 @@ def render_structured_digest(payload: dict[str, Any]) -> str:
                 who = _strip_markdown(task.get("who") or task.get("owner") or "")
                 what = _strip_markdown(task.get("what") or task.get("task") or "")
                 deadline = _strip_markdown(task.get("deadline") or task.get("when") or "")
+                if _contains_high_risk_content(what):
+                    continue
                 parts = []
                 if not what:
                     continue
@@ -188,6 +218,8 @@ def render_structured_digest(payload: dict[str, Any]) -> str:
             if isinstance(question, dict):
                 who = _strip_markdown(question.get("who") or question.get("author") or "")
                 text = _strip_markdown(question.get("question") or question.get("text") or "")
+                if _contains_high_risk_content(text):
+                    continue
                 if who and text:
                     lines.append(f"{idx}. {who}: {text}")
                 elif text:
