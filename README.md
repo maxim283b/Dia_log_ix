@@ -79,6 +79,15 @@ LLM_MODEL=mistral-large-latest
 
 Do not commit real API keys. Rotate any key that was shared in chat.
 
+### PostgreSQL driver
+
+The project now normalizes `DATABASE_URL` values that use `postgresql+asyncpg://`
+to `postgresql+psycopg://` automatically. If you want to set it explicitly, use:
+
+```env
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/digestbot
+```
+
 ### Telegram proxy
 
 If the VPS cannot reach `api.telegram.org` directly, set a proxy for aiogram:

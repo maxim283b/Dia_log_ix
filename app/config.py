@@ -28,6 +28,12 @@ DEFAULT_APP_NAME = "telegram-digest-agent"
 DEFAULT_LLM_TIMEOUT_SECONDS = 180
 
 
+def normalize_database_url(database_url: str) -> str:
+    if database_url.startswith("postgresql+asyncpg://"):
+        return database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+    return database_url
+
+
 @dataclass(slots=True)
 class Settings:
     telegram_bot_token: str = DEFAULT_TELEGRAM_BOT_TOKEN
@@ -81,7 +87,7 @@ class Settings:
 
         return cls(
             telegram_bot_token=env_or_default("TELEGRAM_BOT_TOKEN", DEFAULT_TELEGRAM_BOT_TOKEN),
-            database_url=env_or_default("DATABASE_URL", DEFAULT_DATABASE_URL),
+            database_url=normalize_database_url(env_or_default("DATABASE_URL", DEFAULT_DATABASE_URL)),
             llm_base_url=env_or_default("LLM_BASE_URL", DEFAULT_LLM_BASE_URL),
             llm_api_key=env_or_default("LLM_API_KEY", DEFAULT_LLM_API_KEY),
             llm_model=env_or_default("LLM_MODEL", DEFAULT_LLM_MODEL),
