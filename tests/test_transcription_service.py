@@ -52,3 +52,26 @@ async def test_video_note_transcription_without_ffmpeg(monkeypatch):
     assert provider.calls[0]["mime_type"] == "video/mp4"
     assert provider.calls[0]["audio_bytes"] == b"fake-mp4-bytes"
 
+
+@pytest.mark.asyncio
+async def test_short_video_note_is_skipped(monkeypatch):
+    provider = _FakeProvider()
+    bot = _FakeBot()
+    transcriber = TelegramMediaTranscriber(bot, provider)
+
+    message = type(
+        "Message",
+        (),
+        {
+            "file_id": "abc123",
+            "message_type": "video_note",
+            "telegram_message_id": 42,
+            "transcribed_text": None,
+            "raw_json": {"video_note": {"duration": 5}},
+        },
+    )()
+
+    result = await transcriber.transcribe_message(message)
+
+    assert result is None
+    assert provider.calls == []

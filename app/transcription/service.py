@@ -26,6 +26,15 @@ class TelegramMediaTranscriber:
         if not getattr(message, "file_id", None):
             return None
         message_type = getattr(message, "message_type", "audio")
+        if message_type == "video_note":
+            duration = self._video_note_duration_seconds(message)
+            if duration is not None and duration <= 5:
+                logger.info(
+                    "Skipping short video note transcription: message_id=%s duration=%ss",
+                    getattr(message, "telegram_message_id", None),
+                    duration,
+                )
+                return None
         logger.info(
             "Transcribing media message: message_id=%s type=%s file_id=%s provider=%s",
             getattr(message, "telegram_message_id", None),
@@ -80,6 +89,21 @@ class TelegramMediaTranscriber:
             return "audio/mpeg"
         if message_type == "video_note":
             return "video/mp4"
+        return None
+
+    def _video_note_duration_seconds(self, message: "Message") -> int | None:
+        raw_json = getattr(message, "raw_json", None) or {}
+        if isinstance(raw_json, dict):
+            video_note = raw_json.get("video_note") or {}
+            if isinstance(video_note, dict):
+                duration = video_note.get("duration")
+                if isinstance(duration, (int, float)):
+                    return int(duration)
+
+        video_note = getattr(message, "video_note", None)
+        duration = getattr(video_note, "duration", None)
+        if isinstance(duration, (int, float)):
+            return int(duration)
         return None
 
     def _convert_video_note(self, input_path: Path, tmpdir: Path) -> Path | None:
