@@ -201,6 +201,47 @@ async def test_baseline_runner_skips_evaluation_timeout(session):
 
 
 @pytest.mark.asyncio
+async def test_baseline_runner_cleans_up_source_messages(session):
+    chat, user = await seed_user_chat(session)
+    await seed_message(session, chat=chat, user=user, telegram_message_id=1, text="hello")
+    await seed_message(session, chat=chat, user=user, telegram_message_id=2, text="plan the release")
+    await seed_message(session, chat=chat, user=user, telegram_message_id=3, text="thanks")
+    await session.commit()
+
+    message_repo = MessageRepository(session)
+    run_repo = AgentRunRepository(session)
+    tools = AgentTools(
+        message_repository=message_repo,
+        llm_provider=MockLLMProvider(),
+        transcription_provider=MockTranscriptionProvider(),
+    )
+    evaluator = DigestEvaluator(MockLLMProvider())
+    runner = BaselineRunner(
+        session=session,
+        message_repository=message_repo,
+        run_repository=run_repo,
+        tools=tools,
+        evaluator=evaluator,
+    )
+
+    run = await runner.run(
+        chat_id=chat.id,
+        chat_telegram_id=chat.telegram_chat_id,
+        user_id=user.id,
+        objective="digest",
+        start_message_id=1,
+        end_message_id=4,
+    )
+    await session.commit()
+
+    remaining = await message_repo.get_messages_from(chat.id, start_telegram_message_id=0, before_telegram_message_id=100)
+
+    assert run.final_digest is not None
+    assert remaining == []
+    assert len(run.collected_messages or []) == 3
+
+
+@pytest.mark.asyncio
 async def test_group_messages_by_topic_uses_compact_prompt_and_short_timeout(session):
     chat, user = await seed_user_chat(session)
     for idx in range(1, 131):

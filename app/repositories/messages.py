@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, delete, select
 from sqlalchemy.orm import selectinload
 
 from app.models.message import Message
@@ -106,3 +106,12 @@ class MessageRepository(BaseRepository):
             )
         )
         return result.scalar_one_or_none()
+
+    async def delete_messages_before(self, chat_id: int, before_telegram_message_id: int) -> int:
+        result = await self.session.execute(
+            delete(Message).where(
+                Message.chat_id == chat_id,
+                Message.telegram_message_id < before_telegram_message_id,
+            )
+        )
+        return int(result.rowcount or 0)

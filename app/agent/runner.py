@@ -155,6 +155,8 @@ class BaselineRunner:
         run.status = "completed"
         run.stop_reason = "completed"
         run.finished_at = utc_now()
+        deleted = await self.message_repository.delete_messages_before(chat_id, end_message_id)
+        logger.info("Baseline run cleaned up source messages: deleted=%s chat_id=%s before_message_id=%s", deleted, chat_id, end_message_id)
         await self.session.flush()
         logger.info("Baseline run completed: run_id=%s digest_len=%s", run.id, len(digest or ""))
         evaluation_repo = DigestEvaluationRepository(self.session)
@@ -433,6 +435,13 @@ class AgentRunner:
             run.status = "completed"
             run.stop_reason = "completed"
             run.finished_at = utc_now()
+            deleted = await self.tools.message_repository.delete_messages_before(chat_id, end_message_id)
+            logger.info(
+                "Agent run cleaned up source messages: deleted=%s chat_id=%s before_message_id=%s",
+                deleted,
+                chat_id,
+                end_message_id,
+            )
             logger.info("Agent run completed: run_id=%s", run.id)
             return run
         except Exception as exc:
