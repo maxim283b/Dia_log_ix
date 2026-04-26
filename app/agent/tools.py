@@ -106,6 +106,10 @@ def _prepare_messages_for_topic_grouping(messages: list[dict[str, Any]], *, max_
     return prepared
 
 
+def _prepare_messages_for_extraction(messages: list[dict[str, Any]], *, max_messages: int = 80) -> list[dict[str, Any]]:
+    return _prepare_messages_for_topic_grouping(messages, max_messages=max_messages)
+
+
 def _best_message_snippets(messages: list[dict[str, Any]], limit: int = 3) -> list[str]:
     ranked = sorted(messages, key=_message_score_for_fallback, reverse=True)
     snippets: list[str] = []
@@ -438,6 +442,7 @@ class AgentTools:
         media_transcriber: TelegramMediaTranscriber | None = None,
         llm_summary_timeout_seconds: int = 45,
         llm_topics_timeout_seconds: int = 60,
+        llm_extraction_timeout_seconds: int = 45,
     ) -> None:
         self.message_repository = message_repository
         self.llm_provider = llm_provider
@@ -445,6 +450,7 @@ class AgentTools:
         self.media_transcriber = media_transcriber
         self.llm_summary_timeout_seconds = llm_summary_timeout_seconds
         self.llm_topics_timeout_seconds = llm_topics_timeout_seconds
+        self.llm_extraction_timeout_seconds = llm_extraction_timeout_seconds
 
     async def get_last_user_message(self, *, chat_id: int, user_id: int, before_message_id: int) -> Message | None:
         return await self.message_repository.get_last_user_message_before(chat_id, user_id, before_message_id)
@@ -533,17 +539,16 @@ class AgentTools:
         return [{"title": "General", "messages": payload}]
 
     async def extract_decisions(self, messages: list[Message]) -> list[dict]:
-        payload = [
-            {
-                "telegram_message_id": m.telegram_message_id,
-                "author_display_name": _message_to_payload(m)["author_display_name"],
-                "author_username": _message_to_payload(m)["author_username"],
-                "text": m.text or m.transcribed_text,
-            }
-            for m in messages
-        ]
+        payload = self.serialize_messages(messages)
+        prompt_messages = _prepare_messages_for_extraction(payload)
         try:
-            logger.info("Extracting decisions: count=%s", len(payload))
+            logger.info(
+                "Extracting decisions: count=%s prompt_count=%s prompt_text_len=%s timeout=%ss",
+                len(payload),
+                len(prompt_messages),
+                sum(len(item["text"]) for item in prompt_messages),
+                self.llm_extraction_timeout_seconds,
+            )
             started = time.perf_counter()
             result = await self.llm_provider.generate_json(
                 system=(
@@ -553,7 +558,8 @@ class AgentTools:
                     "Каждое решение и имя участника должны быть на русском языке, если имя известно. "
                     "Извлекай только действительно согласованные решения, а не шутки, эмоции или общие обсуждения."
                 ),
-                prompt=f"Messages JSON: {payload}",
+                prompt=f"Messages JSON: {prompt_messages}",
+                timeout_seconds=self.llm_extraction_timeout_seconds,
             )
             decisions = result.get("decisions", [])
             logger.info(
@@ -567,17 +573,16 @@ class AgentTools:
             return []
 
     async def extract_tasks(self, messages: list[Message]) -> list[dict]:
-        payload = [
-            {
-                "telegram_message_id": m.telegram_message_id,
-                "author_display_name": _message_to_payload(m)["author_display_name"],
-                "author_username": _message_to_payload(m)["author_username"],
-                "text": m.text or m.transcribed_text,
-            }
-            for m in messages
-        ]
+        payload = self.serialize_messages(messages)
+        prompt_messages = _prepare_messages_for_extraction(payload)
         try:
-            logger.info("Extracting tasks: count=%s", len(payload))
+            logger.info(
+                "Extracting tasks: count=%s prompt_count=%s prompt_text_len=%s timeout=%ss",
+                len(payload),
+                len(prompt_messages),
+                sum(len(item["text"]) for item in prompt_messages),
+                self.llm_extraction_timeout_seconds,
+            )
             started = time.perf_counter()
             result = await self.llm_provider.generate_json(
                 system=(
@@ -589,7 +594,8 @@ class AgentTools:
                     "Все текстовые поля должны быть на русском языке. "
                     "Если в сообщении есть конкретное время, дата, срок, место встречи или другой план, обязательно включай это в задачу."
                 ),
-                prompt=f"Messages JSON: {payload}",
+                prompt=f"Messages JSON: {prompt_messages}",
+                timeout_seconds=self.llm_extraction_timeout_seconds,
             )
             tasks = result.get("tasks", [])
             logger.info(
@@ -603,17 +609,16 @@ class AgentTools:
             return []
 
     async def extract_open_questions(self, messages: list[Message]) -> list[dict]:
-        payload = [
-            {
-                "telegram_message_id": m.telegram_message_id,
-                "author_display_name": _message_to_payload(m)["author_display_name"],
-                "author_username": _message_to_payload(m)["author_username"],
-                "text": m.text or m.transcribed_text,
-            }
-            for m in messages
-        ]
+        payload = self.serialize_messages(messages)
+        prompt_messages = _prepare_messages_for_extraction(payload)
         try:
-            logger.info("Extracting open questions: count=%s", len(payload))
+            logger.info(
+                "Extracting open questions: count=%s prompt_count=%s prompt_text_len=%s timeout=%ss",
+                len(payload),
+                len(prompt_messages),
+                sum(len(item["text"]) for item in prompt_messages),
+                self.llm_extraction_timeout_seconds,
+            )
             started = time.perf_counter()
             result = await self.llm_provider.generate_json(
                 system=(
@@ -625,7 +630,8 @@ class AgentTools:
                     "Все текстовые поля должны быть на русском языке. "
                     "Сохраняй конкретику: кто, что, когда, где, какой вариант обсуждается."
                 ),
-                prompt=f"Messages JSON: {payload}",
+                prompt=f"Messages JSON: {prompt_messages}",
+                timeout_seconds=self.llm_extraction_timeout_seconds,
             )
             open_questions = result.get("open_questions", [])
             logger.info(

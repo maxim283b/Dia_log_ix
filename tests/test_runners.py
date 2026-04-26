@@ -38,6 +38,23 @@ class TopicSpyLLMProvider(MockLLMProvider):
         return {"topics": [{"title": "Тестовая тема", "who_said_what": "Короткое описание."}]}
 
 
+class ExtractionSpyLLMProvider(MockLLMProvider):
+    def __init__(self) -> None:
+        self.last_prompt = ""
+        self.last_timeout_seconds = None
+
+    async def generate_json(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        timeout_seconds: int | None = None,
+    ) -> dict:
+        self.last_prompt = prompt
+        self.last_timeout_seconds = timeout_seconds
+        return {"tasks": [{"who": "Максим", "what": "встреча в 19:00"}], "decisions": [], "open_questions": []}
+
+
 @pytest.mark.asyncio
 async def test_baseline_runner(session):
     chat, user = await seed_user_chat(session)
@@ -193,5 +210,36 @@ async def test_group_messages_by_topic_uses_compact_prompt_and_short_timeout(ses
     assert topics and topics[0]["title"] == "Тестовая тема"
     assert tools.llm_provider.last_timeout_seconds == 33
     assert len(tools.llm_provider.last_prompt) < 20000
+    assert "message 1" in tools.llm_provider.last_prompt
+    assert "message 130" in tools.llm_provider.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_task_extraction_uses_compact_prompt_and_short_timeout(session):
+    chat, user = await seed_user_chat(session)
+    for idx in range(1, 131):
+        await seed_message(
+            session,
+            chat=chat,
+            user=user,
+            telegram_message_id=idx,
+            text=f"message {idx} with a plan to meet at 19:00 and discuss the project in detail",
+        )
+    await session.commit()
+
+    message_repo = MessageRepository(session)
+    tools = AgentTools(
+        message_repository=message_repo,
+        llm_provider=ExtractionSpyLLMProvider(),
+        transcription_provider=MockTranscriptionProvider(),
+        llm_extraction_timeout_seconds=21,
+    )
+    messages = await message_repo.get_messages_from(chat.id, start_telegram_message_id=0, before_telegram_message_id=200)
+
+    tasks = await tools.extract_tasks(messages)
+
+    assert tasks and tasks[0]["what"] == "встреча в 19:00"
+    assert tools.llm_provider.last_timeout_seconds == 21
+    assert len(tools.llm_provider.last_prompt) < 15000
     assert "message 1" in tools.llm_provider.last_prompt
     assert "message 130" in tools.llm_provider.last_prompt
