@@ -19,13 +19,34 @@ class EvaluationResult:
 
 
 class DigestEvaluator:
-    def __init__(self, llm_provider: LLMProvider) -> None:
+    def __init__(self, llm_provider: LLMProvider, *, timeout_seconds: int = 45) -> None:
         self.llm_provider = llm_provider
+        self.timeout_seconds = timeout_seconds
+
+    def _compact_source_messages(self, source_messages: list[dict], *, max_messages: int = 40) -> list[dict]:
+        if len(source_messages) <= max_messages:
+            selected = source_messages
+        else:
+            head = max_messages // 2
+            tail = max_messages - head
+            selected = source_messages[:head] + source_messages[-tail:]
+        compacted: list[dict] = []
+        for item in selected:
+            compacted.append(
+                {
+                    "author_display_name": str(item.get("author_display_name") or item.get("author") or "unknown").strip(),
+                    "message_type": str(item.get("message_type") or "text").strip() or "text",
+                    "text": " ".join(str(item.get("text") or item.get("resolved_text") or "").split())[:180],
+                }
+            )
+        return compacted
 
     async def evaluate(self, *, digest: str, source_messages: list[dict]) -> EvaluationResult:
+        compact_source_messages = self._compact_source_messages(source_messages)
         response = await self.llm_provider.generate_json(
             system="Evaluate digest quality. Return strict JSON.",
-            prompt=json.dumps({"digest": digest, "messages": source_messages}, ensure_ascii=False),
+            prompt=json.dumps({"digest": digest[:6000], "messages": compact_source_messages}, ensure_ascii=False),
+            timeout_seconds=self.timeout_seconds,
         )
         return self.parse_json(response)
 

@@ -55,6 +55,23 @@ class ExtractionSpyLLMProvider(MockLLMProvider):
         return {"tasks": [{"who": "Максим", "what": "встреча в 19:00"}], "decisions": [], "open_questions": []}
 
 
+class SummarySpyLLMProvider(MockLLMProvider):
+    def __init__(self) -> None:
+        self.last_prompt = ""
+        self.last_timeout_seconds = None
+
+    async def generate_text(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        timeout_seconds: int | None = None,
+    ) -> LLMResponse:
+        self.last_prompt = prompt
+        self.last_timeout_seconds = timeout_seconds
+        return LLMResponse(text="Краткая сводка о диалоге.")
+
+
 @pytest.mark.asyncio
 async def test_baseline_runner(session):
     chat, user = await seed_user_chat(session)
@@ -238,8 +255,49 @@ async def test_task_extraction_uses_compact_prompt_and_short_timeout(session):
 
     tasks = await tools.extract_tasks(messages)
 
-    assert tasks and tasks[0]["what"] == "встреча в 19:00"
+    assert tasks and tasks[0]["text"] == "встреча в 19:00"
     assert tools.llm_provider.last_timeout_seconds == 21
     assert len(tools.llm_provider.last_prompt) < 15000
     assert "message 1" in tools.llm_provider.last_prompt
     assert "message 130" in tools.llm_provider.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_digest_uses_compact_prompt_and_short_timeout(session):
+    chat, user = await seed_user_chat(session)
+    for idx in range(1, 121):
+        await seed_message(
+            session,
+            chat=chat,
+            user=user,
+            telegram_message_id=idx,
+            text=f"message {idx} with a plan to meet at 19:00 and discuss the project in detail",
+        )
+    await session.commit()
+
+    message_repo = MessageRepository(session)
+    tools = AgentTools(
+        message_repository=message_repo,
+        llm_provider=SummarySpyLLMProvider(),
+        transcription_provider=MockTranscriptionProvider(),
+        llm_summary_timeout_seconds=19,
+    )
+    messages = await message_repo.get_messages_from(chat.id, start_telegram_message_id=0, before_telegram_message_id=200)
+
+    state = type("State", (), {})()
+    state.grouped_topics = [
+        {
+            "title": "Длинная тема " + "x" * 500,
+            "who_said_what": "Очень длинное описание " + ("y" * 800),
+        }
+    ]
+    state.decisions = [{"who": "Максим", "text": "Решение " + ("d" * 1000)}]
+    state.tasks = [{"who": "Максим", "what": "План " + ("t" * 1000), "deadline": "19:00"}]
+    state.open_questions = [{"who": "Максим", "question": "Вопрос " + ("q" * 1000)}]
+
+    digest = await tools.generate_digest(state=state, messages=messages)
+
+    assert "Сводка" in digest
+    assert tools.llm_provider.last_timeout_seconds == 19
+    assert len(tools.llm_provider.last_prompt) < 20000
+    assert "Длинная тема" in tools.llm_provider.last_prompt

@@ -110,6 +110,63 @@ def _prepare_messages_for_extraction(messages: list[dict[str, Any]], *, max_mess
     return _prepare_messages_for_topic_grouping(messages, max_messages=max_messages)
 
 
+def _prepare_messages_for_evaluation(messages: list[dict[str, Any]], *, max_messages: int = 40) -> list[dict[str, Any]]:
+    prepared: list[dict[str, Any]] = []
+    selected = _prepare_messages_for_topic_grouping(messages, max_messages=max_messages)
+    for item in selected:
+        prepared.append(
+            {
+                "author_display_name": item["author_display_name"],
+                "message_type": item["message_type"],
+                "text": item["text"],
+            }
+        )
+    return prepared
+
+
+def _compact_topics_for_prompt(topics: list[Any], *, max_items: int = 8) -> list[dict[str, str]]:
+    compacted: list[dict[str, str]] = []
+    for item in normalize_topic_items(topics)[:max_items]:
+        compacted.append(
+            {
+                "title": _clean_snippet(item["title"], 80),
+                "who_said_what": _clean_snippet(item["who_said_what"], 180),
+            }
+        )
+    return compacted
+
+
+def _compact_named_items_for_prompt(
+    items: list[Any],
+    *,
+    text_keys: tuple[str, ...],
+    who_keys: tuple[str, ...],
+    text_limit: int = 180,
+    max_items: int = 8,
+) -> list[dict[str, str]]:
+    compacted: list[dict[str, str]] = []
+    for item in normalize_named_items(items, text_keys=text_keys, who_keys=who_keys)[:max_items]:
+        compacted.append(
+            {
+                "who": _clean_snippet(item["who"], 80),
+                "text": _clean_snippet(item["text"], text_limit),
+            }
+        )
+    return compacted
+
+
+def _compact_participants_for_prompt(participants: list[dict[str, Any]], *, max_items: int = 12) -> list[dict[str, str]]:
+    compacted: list[dict[str, str]] = []
+    for participant in participants[:max_items]:
+        display_name = _clean_snippet(_normalize_text(participant.get("display_name") or participant.get("username") or participant.get("user_id")), 80)
+        username = _normalize_text(participant.get("username"))
+        item: dict[str, str] = {"display_name": display_name}
+        if username:
+            item["username"] = _clean_snippet(username, 40)
+        compacted.append(item)
+    return compacted
+
+
 def _best_message_snippets(messages: list[dict[str, Any]], limit: int = 3) -> list[str]:
     ranked = sorted(messages, key=_message_score_for_fallback, reverse=True)
     snippets: list[str] = []
@@ -158,10 +215,6 @@ def _fallback_topics_from_messages(messages: list[dict[str, Any]]) -> list[dict[
             {
                 "title": "Текстовый диалог",
                 "who_said_what": "Участники обсуждают свои вопросы и отвечают друг другу в тексте.",
-                "evidence": " ".join(
-                    _normalize_text(item.get("resolved_text") or item.get("text"))
-                    for item in text_messages[:3]
-                )[:240],
             }
         )
     if media_messages:
@@ -169,10 +222,6 @@ def _fallback_topics_from_messages(messages: list[dict[str, Any]]) -> list[dict[
             {
                 "title": "Голосовые и медиа-сообщения",
                 "who_said_what": "Часть смысла передана через voice, audio или video note.",
-                "evidence": " ".join(
-                    _normalize_text(item.get("resolved_text") or item.get("text"))
-                    for item in media_messages[:3]
-                )[:240],
             }
         )
     if not topics:
@@ -180,10 +229,6 @@ def _fallback_topics_from_messages(messages: list[dict[str, Any]]) -> list[dict[
             {
                 "title": "Обсуждение чата",
                 "who_said_what": "Участники обмениваются сообщениями и уточняют детали.",
-                "evidence": " ".join(
-                    _normalize_text(item.get("resolved_text") or item.get("text"))
-                    for item in messages[:3]
-                )[:240],
             }
         )
     return topics
@@ -526,7 +571,7 @@ class AgentTools:
                 prompt=f"Messages JSON: {prompt_messages}",
                 timeout_seconds=self.llm_topics_timeout_seconds,
             )
-            topics = result.get("topics", [])
+            topics = _compact_topics_for_prompt(result.get("topics", []))
             if topics:
                 logger.info(
                     "Grouped messages by topic: topics=%s latency_ms=%s",
@@ -536,7 +581,10 @@ class AgentTools:
                 return topics
         except Exception as exc:
             logger.warning("Failed to group messages by topic: %s", exc)
-        return [{"title": "General", "messages": payload}]
+        fallback_topics = _fallback_topics_from_messages(payload)
+        if fallback_topics:
+            return fallback_topics
+        return [{"title": "Обсуждение чата", "who_said_what": "Участники обсуждают сообщения чата."}]
 
     async def extract_decisions(self, messages: list[Message]) -> list[dict]:
         payload = self.serialize_messages(messages)
@@ -561,7 +609,11 @@ class AgentTools:
                 prompt=f"Messages JSON: {prompt_messages}",
                 timeout_seconds=self.llm_extraction_timeout_seconds,
             )
-            decisions = result.get("decisions", [])
+            decisions = _compact_named_items_for_prompt(
+                result.get("decisions", []),
+                text_keys=("text", "decision", "title"),
+                who_keys=("who", "owner"),
+            )
             logger.info(
                 "Extracted decisions: count=%s latency_ms=%s",
                 len(decisions),
@@ -597,7 +649,11 @@ class AgentTools:
                 prompt=f"Messages JSON: {prompt_messages}",
                 timeout_seconds=self.llm_extraction_timeout_seconds,
             )
-            tasks = result.get("tasks", [])
+            tasks = _compact_named_items_for_prompt(
+                result.get("tasks", []),
+                text_keys=("what", "task", "text"),
+                who_keys=("who", "owner"),
+            )
             logger.info(
                 "Extracted tasks: count=%s latency_ms=%s",
                 len(tasks),
@@ -633,7 +689,11 @@ class AgentTools:
                 prompt=f"Messages JSON: {prompt_messages}",
                 timeout_seconds=self.llm_extraction_timeout_seconds,
             )
-            open_questions = result.get("open_questions", [])
+            open_questions = _compact_named_items_for_prompt(
+                result.get("open_questions", []),
+                text_keys=("question", "text"),
+                who_keys=("who", "author"),
+            )
             logger.info(
                 "Extracted open questions: count=%s latency_ms=%s",
                 len(open_questions),
@@ -647,10 +707,22 @@ class AgentTools:
     async def generate_digest(self, *, state: AgentState, messages: list[Message]) -> str:
         payload = self.serialize_messages(messages)
         participants = self.serialize_participants(messages)
-        topics = state.grouped_topics or _fallback_topics_from_messages(payload)
-        decisions = state.decisions or _extract_decisions_from_messages(payload)
-        tasks = state.tasks or _extract_tasks_from_messages(payload)
-        open_questions = state.open_questions or _extract_questions_from_messages(payload)
+        topics = _compact_topics_for_prompt(state.grouped_topics or _fallback_topics_from_messages(payload))
+        decisions = _compact_named_items_for_prompt(
+            state.decisions or _extract_decisions_from_messages(payload),
+            text_keys=("text", "decision", "title"),
+            who_keys=("who", "owner"),
+        )
+        tasks = _compact_named_items_for_prompt(
+            state.tasks or _extract_tasks_from_messages(payload),
+            text_keys=("what", "task", "text"),
+            who_keys=("who", "owner"),
+        )
+        open_questions = _compact_named_items_for_prompt(
+            state.open_questions or _extract_questions_from_messages(payload),
+            text_keys=("question", "text"),
+            who_keys=("who", "author"),
+        )
         warnings: list[str] = []
         logger.info(
             "Generating digest: participants=%s messages=%s topics=%s decisions=%s tasks=%s open_questions=%s",
@@ -677,7 +749,7 @@ class AgentTools:
                 ),
                 prompt=json.dumps(
                     {
-                        "participants": participants,
+                        "participants": _compact_participants_for_prompt(participants),
                         "topics": topics,
                         "decisions": decisions,
                         "tasks": tasks,
@@ -726,19 +798,22 @@ class AgentTools:
         )
 
     async def evaluate_digest(self, *, digest: str, source_messages: list[Message]) -> dict:
+        compact_source_messages = _prepare_messages_for_evaluation(self.serialize_messages(source_messages))
         payload = {
             "digest": digest,
-            "source_messages": [m.text or m.transcribed_text for m in source_messages],
+            "source_messages": compact_source_messages,
         }
         logger.info(
-            "Evaluating digest: digest_len=%s source_messages=%s",
+            "Evaluating digest: digest_len=%s source_messages=%s source_text_len=%s",
             len(digest or ""),
-            len(source_messages),
+            len(compact_source_messages),
+            sum(len(item["text"]) for item in compact_source_messages),
         )
         started = time.perf_counter()
         result = await self.llm_provider.generate_json(
             system="Evaluate the digest and return JSON with scoring fields.",
-            prompt=str(payload),
+            prompt=json.dumps(payload, ensure_ascii=False),
+            timeout_seconds=self.llm_extraction_timeout_seconds,
         )
         logger.info("Digest evaluation completed: latency_ms=%s", int((time.perf_counter() - started) * 1000))
         return result

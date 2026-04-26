@@ -237,7 +237,7 @@ async def _handle_digest(message: Message, bot: Bot, session_factory, settings: 
             llm_topics_timeout_seconds=settings.llm_topics_timeout_seconds,
             llm_extraction_timeout_seconds=settings.llm_extraction_timeout_seconds,
         )
-        evaluator = DigestEvaluator(llm)
+        evaluator = DigestEvaluator(llm, timeout_seconds=settings.llm_evaluation_timeout_seconds)
         user_repo = UserRepository(session)
         chat_repo = ChatRepository(session)
         user = await user_repo.get_or_create_from_payload(message.from_user)

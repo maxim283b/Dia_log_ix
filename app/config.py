@@ -29,6 +29,7 @@ DEFAULT_LLM_TIMEOUT_SECONDS = 180
 DEFAULT_LLM_SUMMARY_TIMEOUT_SECONDS = 45
 DEFAULT_LLM_TOPICS_TIMEOUT_SECONDS = 60
 DEFAULT_LLM_EXTRACTION_TIMEOUT_SECONDS = 45
+DEFAULT_LLM_EVALUATION_TIMEOUT_SECONDS = 45
 DEFAULT_LOG_LEVEL = "INFO"
 
 
@@ -59,6 +60,7 @@ class Settings:
     llm_summary_timeout_seconds: int = DEFAULT_LLM_SUMMARY_TIMEOUT_SECONDS
     llm_topics_timeout_seconds: int = DEFAULT_LLM_TOPICS_TIMEOUT_SECONDS
     llm_extraction_timeout_seconds: int = DEFAULT_LLM_EXTRACTION_TIMEOUT_SECONDS
+    llm_evaluation_timeout_seconds: int = DEFAULT_LLM_EVALUATION_TIMEOUT_SECONDS
     log_level: str = DEFAULT_LOG_LEVEL
 
     @classmethod
@@ -121,6 +123,10 @@ class Settings:
             llm_extraction_timeout_seconds=env_int_or_default(
                 "LLM_EXTRACTION_TIMEOUT_SECONDS",
                 DEFAULT_LLM_EXTRACTION_TIMEOUT_SECONDS,
+            ),
+            llm_evaluation_timeout_seconds=env_int_or_default(
+                "LLM_EVALUATION_TIMEOUT_SECONDS",
+                DEFAULT_LLM_EVALUATION_TIMEOUT_SECONDS,
             ),
             log_level=env_or_default("LOG_LEVEL", DEFAULT_LOG_LEVEL),
         )

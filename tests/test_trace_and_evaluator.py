@@ -8,6 +8,30 @@ from app.llm.providers import MockLLMProvider
 from app.models.agent_run import AgentRun
 
 
+class EvaluationSpyLLMProvider(MockLLMProvider):
+    def __init__(self) -> None:
+        self.last_prompt = ""
+        self.last_timeout_seconds = None
+
+    async def generate_json(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        timeout_seconds: int | None = None,
+    ) -> dict:
+        self.last_prompt = prompt
+        self.last_timeout_seconds = timeout_seconds
+        return {
+            "correctness": 5,
+            "groundedness": 5,
+            "completeness": 5,
+            "coverage_of_required_fields": 5,
+            "source_consistency": 5,
+            "comment": "ok",
+        }
+
+
 @pytest.mark.asyncio
 async def test_trace_save(session):
     run = AgentRun(
@@ -49,3 +73,25 @@ def test_evaluator_json_parsing():
     assert parsed.coverage_of_required_fields == 2
     assert parsed.source_consistency == 1
     assert parsed.comment == "ok"
+
+
+@pytest.mark.asyncio
+async def test_evaluator_uses_compact_prompt_and_timeout():
+    provider = EvaluationSpyLLMProvider()
+    evaluator = DigestEvaluator(provider, timeout_seconds=17)
+    source_messages = [
+        {
+            "author_display_name": "Максим",
+            "message_type": "text",
+            "text": f"message {idx} with a plan to meet at 19:00 and discuss the project in detail",
+        }
+        for idx in range(1, 121)
+    ]
+
+    result = await evaluator.evaluate(digest="Краткий дайджест.", source_messages=source_messages)
+
+    assert result.correctness == 5
+    assert provider.last_timeout_seconds == 17
+    assert len(provider.last_prompt) < 12000
+    assert "message 1" in provider.last_prompt
+    assert "message 120" in provider.last_prompt
