@@ -68,7 +68,7 @@ async def test_generate_digest_falls_back_when_llm_returns_empty_json(session):
     await session.commit()
 
     class EmptyJsonLLMProvider(MockLLMProvider):
-        async def generate_json(self, *, system: str, prompt: str) -> dict:
+        async def generate_json(self, *, system: str, prompt: str, timeout_seconds: int | None = None) -> dict:
             return {}
 
     repo = MessageRepository(session)

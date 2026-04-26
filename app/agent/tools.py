@@ -83,6 +83,29 @@ def _message_score_for_fallback(message: dict[str, Any]) -> int:
     return score
 
 
+def _compact_text_for_llm(text: str, limit: int = 120) -> str:
+    return _clean_snippet(text, limit=limit)
+
+
+def _prepare_messages_for_topic_grouping(messages: list[dict[str, Any]], *, max_messages: int = 120) -> list[dict[str, Any]]:
+    if len(messages) <= max_messages:
+        selected = messages
+    else:
+        head = max_messages // 2
+        tail = max_messages - head
+        selected = messages[:head] + messages[-tail:]
+    prepared: list[dict[str, Any]] = []
+    for item in selected:
+        prepared.append(
+            {
+                "author_display_name": _normalize_text(item.get("author_display_name") or item.get("author") or "unknown"),
+                "text": _compact_text_for_llm(_normalize_text(item.get("resolved_text") or item.get("text")), limit=120),
+                "message_type": item.get("message_type") or "text",
+            }
+        )
+    return prepared
+
+
 def _best_message_snippets(messages: list[dict[str, Any]], limit: int = 3) -> list[str]:
     ranked = sorted(messages, key=_message_score_for_fallback, reverse=True)
     snippets: list[str] = []
@@ -414,12 +437,14 @@ class AgentTools:
         transcription_provider: TranscriptionProvider,
         media_transcriber: TelegramMediaTranscriber | None = None,
         llm_summary_timeout_seconds: int = 45,
+        llm_topics_timeout_seconds: int = 60,
     ) -> None:
         self.message_repository = message_repository
         self.llm_provider = llm_provider
         self.transcription_provider = transcription_provider
         self.media_transcriber = media_transcriber
         self.llm_summary_timeout_seconds = llm_summary_timeout_seconds
+        self.llm_topics_timeout_seconds = llm_topics_timeout_seconds
 
     async def get_last_user_message(self, *, chat_id: int, user_id: int, before_message_id: int) -> Message | None:
         return await self.message_repository.get_last_user_message_before(chat_id, user_id, before_message_id)
@@ -473,18 +498,16 @@ class AgentTools:
         return results
 
     async def group_messages_by_topic(self, messages: list[Message]) -> list[dict]:
-        payload = [
-            {
-                "telegram_message_id": m.telegram_message_id,
-                "author_display_name": _message_to_payload(m)["author_display_name"],
-                "author_username": _message_to_payload(m)["author_username"],
-                "text": m.text or m.transcribed_text,
-                "message_type": m.message_type,
-            }
-            for m in messages
-        ]
+        payload = self.serialize_messages(messages)
+        prompt_messages = _prepare_messages_for_topic_grouping(payload)
         try:
-            logger.info("Grouping messages by topic: count=%s", len(payload))
+            logger.info(
+                "Grouping messages by topic: count=%s prompt_count=%s prompt_text_len=%s timeout=%ss",
+                len(payload),
+                len(prompt_messages),
+                sum(len(item["text"]) for item in prompt_messages),
+                self.llm_topics_timeout_seconds,
+            )
             started = time.perf_counter()
             result = await self.llm_provider.generate_json(
                 system=(
@@ -494,7 +517,8 @@ class AgentTools:
                     "Все поля, заголовки и краткие описания должны быть на русском языке. "
                     "По возможности укажи, кто что сказал, и обязательно сохраняй конкретные факты: время, даты, места, людей, планы и причинно-следственные связи."
                 ),
-                prompt=f"Messages JSON: {payload}",
+                prompt=f"Messages JSON: {prompt_messages}",
+                timeout_seconds=self.llm_topics_timeout_seconds,
             )
             topics = result.get("topics", [])
             if topics:

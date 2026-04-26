@@ -14,11 +14,28 @@ from tests.conftest import seed_message, seed_user_chat
 
 
 class TimeoutOnJsonLLMProvider(MockLLMProvider):
-    async def generate_text(self, *, system: str, prompt: str) -> LLMResponse:
+    async def generate_text(self, *, system: str, prompt: str, timeout_seconds: int | None = None) -> LLMResponse:
         return LLMResponse(text="1. Summary\nFallback digest")
 
-    async def generate_json(self, *, system: str, prompt: str) -> dict:
+    async def generate_json(self, *, system: str, prompt: str, timeout_seconds: int | None = None) -> dict:
         raise TimeoutError("timed out")
+
+
+class TopicSpyLLMProvider(MockLLMProvider):
+    def __init__(self) -> None:
+        self.last_prompt = ""
+        self.last_timeout_seconds = None
+
+    async def generate_json(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        timeout_seconds: int | None = None,
+    ) -> dict:
+        self.last_prompt = prompt
+        self.last_timeout_seconds = timeout_seconds
+        return {"topics": [{"title": "Тестовая тема", "who_said_what": "Короткое описание."}]}
 
 
 @pytest.mark.asyncio
@@ -147,3 +164,34 @@ async def test_baseline_runner_skips_evaluation_timeout(session):
     assert run.status == "completed"
     assert run.final_digest is not None
     assert "hello" in run.final_digest.lower() or "plan the release" in run.final_digest.lower()
+
+
+@pytest.mark.asyncio
+async def test_group_messages_by_topic_uses_compact_prompt_and_short_timeout(session):
+    chat, user = await seed_user_chat(session)
+    for idx in range(1, 131):
+        await seed_message(
+            session,
+            chat=chat,
+            user=user,
+            telegram_message_id=idx,
+            text=f"message {idx} with a plan to meet at 19:00 and discuss the project in detail",
+        )
+    await session.commit()
+
+    message_repo = MessageRepository(session)
+    tools = AgentTools(
+        message_repository=message_repo,
+        llm_provider=TopicSpyLLMProvider(),
+        transcription_provider=MockTranscriptionProvider(),
+        llm_topics_timeout_seconds=33,
+    )
+    messages = await message_repo.get_messages_from(chat.id, start_telegram_message_id=0, before_telegram_message_id=200)
+
+    topics = await tools.group_messages_by_topic(messages)
+
+    assert topics and topics[0]["title"] == "Тестовая тема"
+    assert tools.llm_provider.last_timeout_seconds == 33
+    assert len(tools.llm_provider.last_prompt) < 20000
+    assert "message 1" in tools.llm_provider.last_prompt
+    assert "message 130" in tools.llm_provider.last_prompt
