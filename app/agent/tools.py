@@ -32,6 +32,7 @@ def _message_to_payload(message: Message) -> dict[str, Any]:
     if not display_name:
         display_name = getattr(author, "username", None) or f"user_{message.user_id}"
     username = getattr(author, "username", None)
+    resolved_text = message.transcribed_text or message.text
     return {
         "id": message.id,
         "telegram_message_id": message.telegram_message_id,
@@ -40,6 +41,7 @@ def _message_to_payload(message: Message) -> dict[str, Any]:
         "text": message.text,
         "file_id": message.file_id,
         "transcribed_text": message.transcribed_text,
+        "resolved_text": resolved_text,
         "user_id": message.user_id,
         "chat_id": message.chat_id,
         "author_display_name": display_name,
@@ -208,7 +210,12 @@ def _fallback_topics_from_messages(messages: list[dict[str, Any]]) -> list[dict[
     if not messages:
         return []
     text_messages = [item for item in messages if (item.get("message_type") or "text") == "text"]
-    media_messages = [item for item in messages if (item.get("message_type") or "text") in {"voice", "audio", "video_note"}]
+    transcribed_media_messages = [
+        item
+        for item in messages
+        if (item.get("message_type") or "text") in {"voice", "audio", "video_note"}
+        and _normalize_text(item.get("resolved_text") or item.get("transcribed_text"))
+    ]
     topics: list[dict[str, str]] = []
     if text_messages:
         topics.append(
@@ -217,11 +224,11 @@ def _fallback_topics_from_messages(messages: list[dict[str, Any]]) -> list[dict[
                 "who_said_what": "Участники обсуждают свои вопросы и отвечают друг другу в тексте.",
             }
         )
-    if media_messages:
+    if transcribed_media_messages:
         topics.append(
             {
-                "title": "Голосовые и медиа-сообщения",
-                "who_said_what": "Часть смысла передана через voice, audio или video note.",
+                "title": "Расшифрованные голосовые и видео",
+                "who_said_what": "В дайджест включены только те voice, audio или video note, которые удалось расшифровать.",
             }
         )
     if not topics:

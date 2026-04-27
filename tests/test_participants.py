@@ -37,6 +37,32 @@ async def test_serialize_messages_and_prompt_include_participant_names(session):
     assert "@maxim_b" in prompt
 
 
+@pytest.mark.asyncio
+async def test_serialize_messages_uses_transcription_as_resolved_text(session):
+    chat, user = await seed_user_chat(session, user_id=2003, bot=False)
+    message = await seed_message(
+        session,
+        chat=chat,
+        user=user,
+        telegram_message_id=1,
+        text=None,
+        message_type="video_note",
+    )
+    message.transcribed_text = "В голосовом сказали встретиться в 19:00."
+    await session.commit()
+
+    repo = MessageRepository(session)
+    tools = AgentTools(
+        message_repository=repo,
+        llm_provider=MockLLMProvider(),
+        transcription_provider=MockTranscriptionProvider(),
+    )
+    messages = await repo.get_messages_from(chat.id, start_telegram_message_id=0, before_telegram_message_id=2)
+    serialized = tools.serialize_messages(messages)
+
+    assert serialized[0]["resolved_text"] == "В голосовом сказали встретиться в 19:00."
+
+
 def test_digest_prompt_prevents_media_overgeneralization():
     prompt = build_digest_prompt(
         [
@@ -112,6 +138,24 @@ def test_fallback_summary_prefers_informative_messages():
     assert "Винницы" in summary
     assert "29 апреля" in summary
     assert "ужасы" in summary
+
+
+def test_fallback_topics_ignores_untranscribed_media():
+    from app.agent.tools import _fallback_topics_from_messages
+
+    topics = _fallback_topics_from_messages(
+        [
+            {
+                "author_display_name": "Максим Борисов",
+                "message_type": "video_note",
+                "text": None,
+                "transcribed_text": None,
+                "resolved_text": None,
+            }
+        ]
+    )
+
+    assert all("медиа" not in topic["title"].lower() for topic in topics)
 
 
 def test_render_structured_digest_omits_evidence():
