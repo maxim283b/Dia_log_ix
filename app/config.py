@@ -15,6 +15,7 @@ DEFAULT_DATABASE_URL = "sqlite+aiosqlite:///./digestbot.db"
 DEFAULT_LLM_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_LLM_API_KEY = ""
 DEFAULT_LLM_MODEL = "mock"
+DEFAULT_LLM_PROVIDER = "openai"
 DEFAULT_TRANSCRIPTION_MODE = "mock"
 DEFAULT_TRANSCRIPTION_API_KEY = ""
 DEFAULT_TRANSCRIPTION_MODEL = "whisper-1"
@@ -46,6 +47,7 @@ class Settings:
     llm_base_url: str = DEFAULT_LLM_BASE_URL
     llm_api_key: str = DEFAULT_LLM_API_KEY
     llm_model: str = DEFAULT_LLM_MODEL
+    llm_provider: str = DEFAULT_LLM_PROVIDER
     transcription_mode: str = DEFAULT_TRANSCRIPTION_MODE
     transcription_api_key: str = DEFAULT_TRANSCRIPTION_API_KEY
     transcription_model: str = DEFAULT_TRANSCRIPTION_MODEL
@@ -101,6 +103,7 @@ class Settings:
             llm_base_url=env_or_default("LLM_BASE_URL", DEFAULT_LLM_BASE_URL),
             llm_api_key=env_or_default("LLM_API_KEY", DEFAULT_LLM_API_KEY),
             llm_model=env_or_default("LLM_MODEL", DEFAULT_LLM_MODEL),
+            llm_provider=env_or_default("LLM_PROVIDER", DEFAULT_LLM_PROVIDER).lower(),
             transcription_mode=env_or_default("TRANSCRIPTION_MODE", DEFAULT_TRANSCRIPTION_MODE),
             transcription_api_key=env_or_default("TRANSCRIPTION_API_KEY", DEFAULT_TRANSCRIPTION_API_KEY),
             transcription_model=env_or_default("TRANSCRIPTION_MODEL", DEFAULT_TRANSCRIPTION_MODEL),

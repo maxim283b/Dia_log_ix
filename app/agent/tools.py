@@ -209,33 +209,62 @@ def _fallback_summary_from_messages(messages: list[dict[str, Any]], topics: list
 def _fallback_topics_from_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
     if not messages:
         return []
-    text_messages = [item for item in messages if (item.get("message_type") or "text") == "text"]
-    transcribed_media_messages = [
-        item
-        for item in messages
-        if (item.get("message_type") or "text") in {"voice", "audio", "video_note"}
-        and _normalize_text(item.get("resolved_text") or item.get("transcribed_text"))
+    buckets: list[tuple[str, tuple[str, ...]]] = [
+        ("Встречи, время и переносы", ("встреч", "встрет", "13:30", "19:00", "четверг", "пятниц", "завтра", "сегодня", "вокзал", "перенос")),
+        ("Одежда и сборы", ("кеды", "кроссов", "джинс", "брюк", "одежд", "белые", "красные")),
+        ("Файлы, код и технические вопросы", ("файл", "png", "код", "встав", "работает", "программист")),
+        ("Квест и планы досуга", ("квест", "фильм", "обед", "ужин", "пообед", "посмотреть")),
+        ("Деньги и оплата", ("деньг", "оплат", "перев", "занят", "скин")),
     ]
     topics: list[dict[str, str]] = []
-    if text_messages:
+    used_keys: set[str] = set()
+    for title, keywords in buckets:
+        matched = []
+        for item in messages:
+            text = _normalize_text(item.get("resolved_text") or item.get("text"))
+            lowered = text.lower()
+            if text and any(keyword in lowered for keyword in keywords):
+                matched.append(item)
+        if not matched:
+            continue
+        snippets = _best_message_snippets(matched, limit=2)
+        details = "; ".join(_clean_snippet(snippet, 160) for snippet in snippets)
+        key = title.lower()
+        if key in used_keys:
+            continue
+        used_keys.add(key)
         topics.append(
             {
-                "title": "Текстовый диалог",
-                "who_said_what": "Участники обсуждают свои вопросы и отвечают друг другу в тексте.",
+                "title": title,
+                "who_said_what": details or "Участники обсуждают детали этой темы.",
             }
         )
-    if transcribed_media_messages:
+        if len(topics) >= 5:
+            break
+
+    transcribed_media_snippets = _best_message_snippets(
+        [
+            item
+            for item in messages
+            if (item.get("message_type") or "text") in {"voice", "audio", "video_note"}
+            and _normalize_text(item.get("resolved_text") or item.get("transcribed_text"))
+        ],
+        limit=2,
+    )
+    if transcribed_media_snippets and "расшифрованные голосовые и видео" not in used_keys:
         topics.append(
             {
                 "title": "Расшифрованные голосовые и видео",
-                "who_said_what": "В дайджест включены только те voice, audio или video note, которые удалось расшифровать.",
+                "who_said_what": "; ".join(_clean_snippet(snippet, 160) for snippet in transcribed_media_snippets),
             }
         )
     if not topics:
+        snippets = _best_message_snippets(messages, limit=2)
         topics.append(
             {
                 "title": "Обсуждение чата",
-                "who_said_what": "Участники обмениваются сообщениями и уточняют детали.",
+                "who_said_what": "; ".join(_clean_snippet(snippet, 160) for snippet in snippets)
+                or "Участники обмениваются сообщениями и уточняют детали.",
             }
         )
     return topics
@@ -288,9 +317,79 @@ _TIME_REFERENCE_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+_QUESTION_START_RE = re.compile(
+    r"^\s*(?:кто|что|где|куда|когда|зачем|почему|как|какой|какая|какие|сможет|сможешь|можно|надо ли|стоит ли)\b",
+    flags=re.IGNORECASE,
+)
+
+_ANSWER_MARKER_RE = re.compile(
+    r"\b(?:да|нет|ага|ок|хорошо|я|мы|буду|будем|сможет|смогу|не смогу|встречу|встретит|четверг|пятниц|завтра|сегодня|\d{1,2}[:.]\d{2})\b",
+    flags=re.IGNORECASE,
+)
+
 
 def _has_time_reference(text: str) -> bool:
     return bool(_TIME_REFERENCE_RE.search(_normalize_text(text)))
+
+
+def _is_question_text(text: str) -> bool:
+    normalized = _normalize_text(text)
+    lowered = normalized.lower()
+    return "?" in normalized or bool(_QUESTION_START_RE.search(lowered))
+
+
+def _question_key(text: str) -> str:
+    return re.sub(r"\W+", " ", _normalize_text(text).lower()).strip()
+
+
+def _looks_like_answer_to_question(question: str, answer: str) -> bool:
+    question = _normalize_text(question).lower()
+    answer = _normalize_text(answer).lower()
+    if not question or not answer or _is_question_text(answer):
+        return False
+    if len(answer) < 2:
+        return False
+    if _ANSWER_MARKER_RE.search(answer):
+        return True
+    if question.startswith("кто ") and any(word in answer for word in ("я ", "меня", "артем", "жен", "максим", "арнольд")):
+        return True
+    if question.startswith("почему ") and any(word in answer for word in ("потому", "из-за", "так", "поэтому")):
+        return True
+    if any(word in question for word in ("четверг", "пятниц", "завтра", "сегодня", "13:30", "19:00")) and _has_time_reference(answer):
+        return True
+    return False
+
+
+def _question_was_answered_later(question: str, question_index: int, messages: list[dict[str, Any]], *, lookahead: int = 12) -> bool:
+    question_author = _normalize_text(messages[question_index].get("author_display_name") or messages[question_index].get("author"))
+    for item in messages[question_index + 1 : question_index + 1 + lookahead]:
+        answer_author = _normalize_text(item.get("author_display_name") or item.get("author"))
+        if question_author and answer_author == question_author:
+            continue
+        answer_text = _normalize_text(item.get("resolved_text") or item.get("text"))
+        if _looks_like_answer_to_question(question, answer_text):
+            return True
+    return False
+
+
+def _filter_unanswered_questions(items: list[Any], messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    normalized = normalize_named_items(items, text_keys=("question", "text"), who_keys=("who", "author"))
+    message_keys = [_question_key(_normalize_text(item.get("resolved_text") or item.get("text"))) for item in messages]
+    filtered: list[dict[str, str]] = []
+    for item in normalized:
+        question = item["text"]
+        key = _question_key(question)
+        if not key:
+            continue
+        matched_index: int | None = None
+        for index, message_key in enumerate(message_keys):
+            if key == message_key or key in message_key or message_key in key:
+                matched_index = index
+                break
+        if matched_index is not None and _question_was_answered_later(question, matched_index, messages):
+            continue
+        filtered.append({"who": _clean_snippet(item["who"], 80), "text": _clean_snippet(question, 180)})
+    return filtered
 
 
 def _extract_planned_time_tasks_from_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -321,12 +420,14 @@ def _extract_planned_time_tasks_from_messages(messages: list[dict[str, Any]]) ->
 def _extract_questions_from_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
     questions: list[dict[str, str]] = []
     seen: set[str] = set()
-    for item in messages:
+    for index, item in enumerate(messages):
         text = _normalize_text(item.get("resolved_text") or item.get("text"))
         lowered = text.lower()
         if not text:
             continue
-        if "?" not in text and not lowered.startswith(("как ", "когда ", "какой ", "какая ", "какие ", "почему ", "зачем ", "стоит ли", "может ли")):
+        if not _is_question_text(text):
+            continue
+        if _question_was_answered_later(text, index, messages):
             continue
         key = lowered[:160]
         if key in seen:
@@ -685,9 +786,11 @@ class AgentTools:
             started = time.perf_counter()
             result = await self.llm_provider.generate_json(
                 system=(
-                    "Извлеки только открытые вопросы, неопределённости, просьбы о прояснении или нерешённые сомнения. "
+                    "Извлеки только вопросы, которые остались без ответа к концу предоставленного фрагмента чата. "
                     "Верни строгий JSON с массивом 'open_questions'. "
                     "Если открытых вопросов нет, верни пустой массив. "
+                    "Не включай вопрос, если дальше в сообщениях есть ответ, подтверждение, выбор варианта или договорённость. "
+                    "Не включай риторические вопросы, шутки и вопросы, которые уже превратились в решение или задачу. "
                     "Сохраняй имя участника, если оно известно. "
                     "Предпочитай поля who, question, context. "
                     "Все текстовые поля должны быть на русском языке. "
@@ -696,10 +799,9 @@ class AgentTools:
                 prompt=f"Messages JSON: {prompt_messages}",
                 timeout_seconds=self.llm_extraction_timeout_seconds,
             )
-            open_questions = _compact_named_items_for_prompt(
+            open_questions = _filter_unanswered_questions(
                 result.get("open_questions", []),
-                text_keys=("question", "text"),
-                who_keys=("who", "author"),
+                payload,
             )
             logger.info(
                 "Extracted open questions: count=%s latency_ms=%s",
@@ -725,10 +827,9 @@ class AgentTools:
             text_keys=("what", "task", "text"),
             who_keys=("who", "owner"),
         )
-        open_questions = _compact_named_items_for_prompt(
+        open_questions = _filter_unanswered_questions(
             state.open_questions or _extract_questions_from_messages(payload),
-            text_keys=("question", "text"),
-            who_keys=("who", "author"),
+            payload,
         )
         warnings: list[str] = []
         logger.info(

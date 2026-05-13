@@ -158,6 +158,65 @@ def test_fallback_topics_ignores_untranscribed_media():
     assert all("медиа" not in topic["title"].lower() for topic in topics)
 
 
+def test_fallback_topics_are_specific():
+    from app.agent.tools import _fallback_topics_from_messages
+
+    topics = _fallback_topics_from_messages(
+        [
+            {
+                "author_display_name": "Женя",
+                "message_type": "text",
+                "text": "Кто меня завтра встречает в 13:30 на Московском вокзале?",
+                "resolved_text": "Кто меня завтра встречает в 13:30 на Московском вокзале?",
+            },
+            {
+                "author_display_name": "Артемий",
+                "message_type": "text",
+                "text": "Я встречу завтра в 13:30 на Московском вокзале.",
+                "resolved_text": "Я встречу завтра в 13:30 на Московском вокзале.",
+            },
+            {
+                "author_display_name": "Максим",
+                "message_type": "text",
+                "text": "Белые кеды подходят, джинсы можно заменить на бежевые брюки.",
+                "resolved_text": "Белые кеды подходят, джинсы можно заменить на бежевые брюки.",
+            },
+        ]
+    )
+
+    titles = [topic["title"] for topic in topics]
+    assert "Встречи, время и переносы" in titles
+    assert "Одежда и сборы" in titles
+    assert "Текстовый диалог" not in titles
+
+
+def test_extract_questions_keeps_only_unanswered_questions():
+    from app.agent.tools import _extract_questions_from_messages
+
+    questions = _extract_questions_from_messages(
+        [
+            {
+                "author_display_name": "Женя",
+                "text": "Кто меня завтра встречает в 13:30 на Московском вокзале?",
+                "resolved_text": "Кто меня завтра встречает в 13:30 на Московском вокзале?",
+            },
+            {
+                "author_display_name": "Артемий",
+                "text": "Я встречу завтра в 13:30 на Московском вокзале.",
+                "resolved_text": "Я встречу завтра в 13:30 на Московском вокзале.",
+            },
+            {
+                "author_display_name": "Arnold Shpeid",
+                "text": "Сможет ли он попасть на квест завтра?",
+                "resolved_text": "Сможет ли он попасть на квест завтра?",
+            },
+        ]
+    )
+
+    assert len(questions) == 1
+    assert "квест" in questions[0]["question"].lower()
+
+
 def test_render_structured_digest_omits_evidence():
     digest = render_structured_digest(
         {

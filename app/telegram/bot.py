@@ -13,7 +13,7 @@ from app.agent.evaluator import DigestEvaluator
 from app.agent.runner import AgentRunner, BaselineRunner
 from app.agent.tools import AgentTools
 from app.config import Settings
-from app.llm.providers import MockLLMProvider, OpenAICompatibleLLMProvider
+from app.llm.providers import MockLLMProvider, OllamaLLMProvider, OpenAICompatibleLLMProvider
 from app.repositories.agent_runs import AgentRunRepository
 from app.repositories.chats import ChatRepository
 from app.repositories.messages import MessageRepository
@@ -41,6 +41,13 @@ class BotServices:
 def build_llm_provider(settings: Settings):
     if settings.llm_model == "mock" or not settings.llm_base_url:
         return MockLLMProvider()
+    if settings.llm_provider == "ollama":
+        return OllamaLLMProvider(
+            settings.llm_base_url,
+            settings.llm_api_key,
+            settings.llm_model,
+            timeout_seconds=settings.llm_timeout_seconds,
+        )
     return OpenAICompatibleLLMProvider(
         settings.llm_base_url,
         settings.llm_api_key,

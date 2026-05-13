@@ -48,6 +48,7 @@ Required:
 - `LLM_BASE_URL`
 - `LLM_API_KEY`
 - `LLM_MODEL`
+- `LLM_PROVIDER`
 - `TRANSCRIPTION_MODE`
 - `TRANSCRIPTION_API_KEY`
 - `TRANSCRIPTION_MODEL`
@@ -75,6 +76,25 @@ If you want the stronger but usually more expensive option, try:
 
 ```env
 LLM_MODEL=mistral-large-latest
+```
+
+For Ollama Cloud API keys, use the native Ollama provider:
+
+```env
+LLM_PROVIDER=ollama
+LLM_BASE_URL=https://ollama.com/api
+LLM_API_KEY=your-ollama-api-key
+LLM_MODEL=gpt-oss:20b
+```
+
+For a local Ollama server without an API key, you can keep the OpenAI-compatible
+provider:
+
+```env
+LLM_PROVIDER=openai
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_API_KEY=ollama
+LLM_MODEL=llama3.1:8b
 ```
 
 Do not commit real API keys. Rotate any key that was shared in chat.

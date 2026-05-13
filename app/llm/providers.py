@@ -158,3 +158,66 @@ class OpenAICompatibleLLMProvider:
                 except json.JSONDecodeError:
                     pass
             return {"result": text}
+
+
+class OllamaLLMProvider:
+    def __init__(self, base_url: str, api_key: str, model: str, timeout_seconds: int = 60) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+
+    async def generate_text(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        timeout_seconds: int | None = None,
+    ) -> LLMResponse:
+        effective_timeout = timeout_seconds or self.timeout_seconds
+        logger.info(
+            "Ollama text request started: model=%s base_url=%s system_len=%s prompt_len=%s timeout=%ss",
+            self.model,
+            self.base_url,
+            len(system or ""),
+            len(prompt or ""),
+            effective_timeout,
+        )
+        started = time.perf_counter()
+        payload = {
+            "model": self.model,
+            "stream": False,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        }
+        data = await asyncio.to_thread(self._post_json, "/chat", payload, effective_timeout)
+        content = data.get("message", {}).get("content", "")
+        logger.info(
+            "Ollama text request finished: model=%s latency_ms=%s response_len=%s",
+            self.model,
+            int((time.perf_counter() - started) * 1000),
+            len(content or ""),
+        )
+        return LLMResponse(text=content, raw=data)
+
+    async def generate_json(self, *, system: str, prompt: str, timeout_seconds: int | None = None) -> dict:
+        response = await self.generate_text(system=system, prompt=prompt, timeout_seconds=timeout_seconds)
+        return OpenAICompatibleLLMProvider._extract_json(self, response.text)
+
+    def _post_json(self, path: str, payload: dict, timeout_seconds: int) -> dict:
+        body = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        req = request.Request(
+            f"{self.base_url}{path}",
+            data=body,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=timeout_seconds) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"Ollama request timed out after {timeout_seconds}s for {path}"
+            ) from exc
