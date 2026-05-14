@@ -327,9 +327,42 @@ _ANSWER_MARKER_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+_MEANINGFUL_ACTION_RE = re.compile(
+    r"\b(?:решили|договорились|согласились|будем|надо|нужно|план|встреч|встрет|перенос|собир|закаж|оплат|перевед|закрыть|запустить|сделать|подготов|купить|завтра|сегодня|четверг|пятниц|\d{1,2}[:.]\d{2})\b",
+    flags=re.IGNORECASE,
+)
+
+_LOW_SIGNAL_CHAT_RE = re.compile(
+    r"\b(?:насру|насрал|насрали|покакай|говн|бля|соплячок|котелок|сок)\b",
+    flags=re.IGNORECASE,
+)
+
 
 def _has_time_reference(text: str) -> bool:
     return bool(_TIME_REFERENCE_RE.search(_normalize_text(text)))
+
+
+def _has_meaningful_action_signal(text: str) -> bool:
+    return bool(_MEANINGFUL_ACTION_RE.search(_normalize_text(text)))
+
+
+def _is_low_signal_chat(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return True
+    return bool(_LOW_SIGNAL_CHAT_RE.search(normalized)) and not _has_meaningful_action_signal(normalized)
+
+
+def _filter_meaningful_named_items(items: list[dict[str, str]], *, kind: str) -> list[dict[str, str]]:
+    filtered: list[dict[str, str]] = []
+    for item in items:
+        text = _normalize_text(item.get("text"))
+        if not text or _is_low_signal_chat(text):
+            continue
+        if kind in {"decision", "task"} and not _has_meaningful_action_signal(text):
+            continue
+        filtered.append(item)
+    return filtered
 
 
 def _is_question_text(text: str) -> bool:
@@ -673,6 +706,8 @@ class AgentTools:
                     "Сгруппируй сообщения Telegram-чата по темам. "
                     "Верни строгий JSON с массивом 'topics'. "
                     "Не придумывай темы, которых нет в сообщениях. "
+                    "Не выделяй одноразовые шутки, ругань, реакции и разговоры ни о чём как отдельные темы. "
+                    "Обобщай бытовую болтовню, если она не содержит планов, решений, вопросов или повторяющегося обсуждения. "
                     "Все поля, заголовки и краткие описания должны быть на русском языке. "
                     "По возможности укажи, кто что сказал, и обязательно сохраняй конкретные факты: время, даты, места, людей, планы и причинно-следственные связи."
                 ),
@@ -712,7 +747,8 @@ class AgentTools:
                     "Верни строгий JSON с массивом 'decisions'. "
                     "Если решений нет, верни пустой массив. "
                     "Каждое решение и имя участника должны быть на русском языке, если имя известно. "
-                    "Извлекай только действительно согласованные решения, а не шутки, эмоции или общие обсуждения."
+                    "Извлекай только действительно согласованные решения, выбор варианта, договорённость о времени/месте, оплате, встрече или следующем действии. "
+                    "Не включай шутки, ругань, мемы, эмоции, провокационные фразы и случайные реплики."
                 ),
                 prompt=f"Messages JSON: {prompt_messages}",
                 timeout_seconds=self.llm_extraction_timeout_seconds,
@@ -722,6 +758,7 @@ class AgentTools:
                 text_keys=("text", "decision", "title"),
                 who_keys=("who", "owner"),
             )
+            decisions = _filter_meaningful_named_items(decisions, kind="decision")
             logger.info(
                 "Extracted decisions: count=%s latency_ms=%s",
                 len(decisions),
@@ -752,7 +789,8 @@ class AgentTools:
                     "Сохраняй имя участника в каждой задаче, если оно известно. "
                     "Предпочитай поля who/owner, what, deadline. "
                     "Все текстовые поля должны быть на русском языке. "
-                    "Если в сообщении есть конкретное время, дата, срок, место встречи или другой план, обязательно включай это в задачу."
+                    "Если в сообщении есть конкретное время, дата, срок, место встречи или другой план, обязательно включай это в задачу. "
+                    "Не включай случайные желания, шутки, ругань или болтовню без ответственного действия."
                 ),
                 prompt=f"Messages JSON: {prompt_messages}",
                 timeout_seconds=self.llm_extraction_timeout_seconds,
@@ -762,6 +800,7 @@ class AgentTools:
                 text_keys=("what", "task", "text"),
                 who_keys=("who", "owner"),
             )
+            tasks = _filter_meaningful_named_items(tasks, kind="task")
             logger.info(
                 "Extracted tasks: count=%s latency_ms=%s",
                 len(tasks),
@@ -822,11 +861,13 @@ class AgentTools:
             text_keys=("text", "decision", "title"),
             who_keys=("who", "owner"),
         )
+        decisions = _filter_meaningful_named_items(decisions, kind="decision")
         tasks = _compact_named_items_for_prompt(
             state.tasks or _extract_tasks_from_messages(payload),
             text_keys=("what", "task", "text"),
             who_keys=("who", "owner"),
         )
+        tasks = _filter_meaningful_named_items(tasks, kind="task")
         open_questions = _filter_unanswered_questions(
             state.open_questions or _extract_questions_from_messages(payload),
             payload,
@@ -850,6 +891,8 @@ class AgentTools:
                     "Напиши краткую, но конкретную сводку на русском языке для дайджеста Telegram-чата. "
                     "Используй только предоставленные структурированные данные. "
                     "Не придумывай факты. "
+                    "Не превращай шутки, ругань, одноразовые реакции и разговоры ни о чём в решения, задачи или важные темы. "
+                    "Если значимых событий мало, так и напиши кратко, без искусственного расширения. "
                     "Не используй английский язык ни в сводке, ни в названиях тем, ни в формулировках полей. "
                     "Сохраняй имена, даты и числовые факты как есть. "
                     "Обязательно передай важные планы, время, дедлайны, участников и итоговые договорённости. "

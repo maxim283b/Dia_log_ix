@@ -217,6 +217,28 @@ def test_extract_questions_keeps_only_unanswered_questions():
     assert "квест" in questions[0]["question"].lower()
 
 
+def test_low_signal_chat_is_not_promoted_to_decisions_or_tasks():
+    from app.agent.tools import _filter_meaningful_named_items
+
+    decisions = _filter_meaningful_named_items(
+        [
+            {"who": "Arnold", "text": "но я тюнину сказал сразу что я в котелок насру"},
+            {"who": "Максим", "text": "Собраться в четверг в 19:00 у Максима"},
+        ],
+        kind="decision",
+    )
+    tasks = _filter_meaningful_named_items(
+        [
+            {"who": "Максим", "text": "Покакай"},
+            {"who": "Артемий", "text": "Подготовить белые кеды завтра"},
+        ],
+        kind="task",
+    )
+
+    assert decisions == [{"who": "Максим", "text": "Собраться в четверг в 19:00 у Максима"}]
+    assert tasks == [{"who": "Артемий", "text": "Подготовить белые кеды завтра"}]
+
+
 def test_render_structured_digest_omits_evidence():
     digest = render_structured_digest(
         {
